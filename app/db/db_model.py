@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from app.db.db_enums import (
+from app.db.db_enum import (
     BuyerType,
     UserStatus,
     VerificationStatus,
