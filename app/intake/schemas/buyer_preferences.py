@@ -52,6 +52,23 @@ class BuyerPreferencesUpsert(IntakeModel):
         decimal_places=2,
     )
 
+    # NOTE:
+    # The database currently calls ARR "AAR".
+    # Intake mirrors the database name until the DB is renamed.
+    minimum_required_aar: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=15,
+        decimal_places=2,
+    )
+
+    preferred_aar: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=15,
+        decimal_places=2,
+    )
+
     preferred_owner_hours_per_week: int | None = Field(
         default=None,
         ge=0,
@@ -71,8 +88,6 @@ class BuyerPreferencesUpsert(IntakeModel):
         default=None,
         ge=0,
     )
-
-    requires_recurring_revenue: bool | None = None
 
     accepts_customer_concentration_above_25_percent: bool | None = None
 
@@ -123,7 +138,7 @@ class BuyerPreferencesUpsert(IntakeModel):
         return value or None
 
     @model_validator(mode="after")
-    def validate_sde_order(
+    def validate_preference_ranges(
         self,
     ) -> "BuyerPreferencesUpsert":
 
@@ -135,6 +150,16 @@ class BuyerPreferencesUpsert(IntakeModel):
             raise ValueError(
                 "preferred_sde must be greater than "
                 "or equal to minimum_required_sde"
+            )
+
+        if (
+            self.minimum_required_aar is not None
+            and self.preferred_aar is not None
+            and self.preferred_aar < self.minimum_required_aar
+        ):
+            raise ValueError(
+                "preferred_aar must be greater than "
+                "or equal to minimum_required_aar"
             )
 
         return self

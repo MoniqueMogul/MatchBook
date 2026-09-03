@@ -50,6 +50,34 @@ def test_preferred_sde_cannot_be_below_minimum() -> None:
         )
 
 
+def test_aar_preferences_are_accepted() -> None:
+
+    preferences = BuyerPreferencesUpsert(
+        minimum_required_aar=100000,
+        preferred_aar=200000,
+    )
+
+    assert (
+        preferences.minimum_required_aar
+        == Decimal("100000")
+    )
+
+    assert (
+        preferences.preferred_aar
+        == Decimal("200000")
+    )
+
+
+def test_preferred_aar_cannot_be_below_minimum() -> None:
+
+    with pytest.raises(ValidationError):
+
+        BuyerPreferencesUpsert(
+            minimum_required_aar=200000,
+            preferred_aar=100000,
+        )
+
+
 def test_negative_training_days_are_rejected() -> None:
 
     with pytest.raises(ValidationError):
