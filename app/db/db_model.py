@@ -28,7 +28,8 @@ from app.db.db_enum import (
     BusinessStatus,
     DocumentType,
     StorageProvider,
-    MatchStatus
+    MatchStatus,
+    LenderApprovedStatus
 )
 
 
@@ -133,6 +134,7 @@ class BuyerProfile(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
         # Application-generated profile UUID.
     )
 
@@ -314,15 +316,15 @@ class BuyerPreferences(Base):
     )
 
     # --------------------------------------------------------
-    # AAR
+    # ARR
     # --------------------------------------------------------
 
-    minimum_required_aar: Mapped[Decimal | None] = mapped_column(
+    minimum_required_arr: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
     )
 
-    preferred_aar: Mapped[Decimal | None] = mapped_column(
+    preferred_arr: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
     )
@@ -369,10 +371,10 @@ class BuyerPreferences(Base):
     )
 
     accepts_customer_concentration_above_25_percent: Mapped[
-        bool | None
+        bool
     ] = mapped_column(
         Boolean,
-        nullable=True,
+        nullable=False,
     )
 
     preferred_acquisition_timeline: Mapped[str | None] = mapped_column(
@@ -423,21 +425,39 @@ class BuyerPreferences(Base):
         ),
 
         CheckConstraint(
+            """
+            minimum_required_sde IS NULL
+            OR preferred_sde IS NULL
+            OR minimum_required_sde <= preferred_sde
+            """,
+            name="ck_buyer_sde_min_lte_preferred",
+        ),
+
+        CheckConstraint(
+            """
+            minimum_required_arr IS NULL
+            OR preferred_arr IS NULL
+            OR minimum_required_arr <= preferred_arr
+            """,
+            name="ck_buyer_arr_min_lte_preferred",
+        ),
+
+        CheckConstraint(
             "preferred_sde IS NULL "
             "OR preferred_sde >= 0",
             name="ck_buyer_preferred_sde_nonnegative",
         ),
 
         CheckConstraint(
-            "minimum_required_aar IS NULL "
-            "OR minimum_required_aar >= 0",
-            name="ck_buyer_min_aar_nonnegative",
+            "minimum_required_arr IS NULL "
+            "OR minimum_required_arr >= 0",
+            name="ck_buyer_min_arr_nonnegative",
         ),
 
         CheckConstraint(
-            "preferred_aar IS NULL "
-            "OR preferred_aar >= 0",
-            name="ck_buyer_preferred_aar_nonnegative",
+            "preferred_arr IS NULL "
+            "OR preferred_arr >= 0",
+            name="ck_buyer_preferred_arr_nonnegative",
         ),
 
         CheckConstraint(
@@ -503,7 +523,7 @@ class BuyerFinancials(Base):
         nullable=True,
     )
 
-    cash_available: Mapped[Decimal | None] = mapped_column(
+    reported_cash_available: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
     )
@@ -528,9 +548,11 @@ class BuyerFinancials(Base):
         nullable=True,
     )
 
-    lender_approval_status: Mapped[str | None] = mapped_column(
-        String(50),
+    lender_approval_status: Mapped[LenderApprovedStatus | None] = mapped_column(
+        String(30),
+        default=LenderApprovedStatus.PENDING,
         nullable=True,
+        index=True,
     )
 
     # --------------------------------------------------------
@@ -593,7 +615,7 @@ class BuyerFinancials(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "cash_available IS NULL OR cash_available >= 0",
+            "reported_cash_available IS NULL OR reported_cash_available >= 0",
             name="ck_buyer_cash_nonnegative",
         ),
         CheckConstraint(
@@ -631,6 +653,7 @@ class SellerProfile(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
     )
 
     user_id: Mapped[UUID] = mapped_column(
@@ -685,10 +708,12 @@ class Business(Base):
         - geography
         - asking price
         - SDE
+        - arr
+        - customer_concentration
         - owner involvement
         - transition training
         - deal preference
-        - preferred acquisition timeline
+        - preferred sale timeline
     """
 
     __tablename__ = "businesses"
@@ -781,7 +806,7 @@ class Business(Base):
     # Financial / Business Metrics
     # --------------------------------------------------------
 
-    aar: Mapped[Decimal | None] = mapped_column(
+    arr: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
         index=True,
@@ -819,13 +844,14 @@ class Business(Base):
     )
     # Seller can specify a fixed number of days or
     # "as long as you need" at the application/schema level.
+    # which would translate to infinite days, always exceeding buyer prefered days
 
     deal_preference: Mapped[DealPreference | None] = mapped_column(
         String(20),
         nullable=True,
     )
 
-    preferred_acquisition_timeline: Mapped[str | None] = mapped_column(
+    preferred_sale_timeline: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
     )
@@ -896,8 +922,8 @@ class Business(Base):
         ),
 
         CheckConstraint(
-            "aar IS NULL OR aar >= 0",
-            name="ck_business_aar_nonnegative",
+            "arr IS NULL OR arr >= 0",
+            name="ck_business_arr_nonnegative",
         ),
 
         CheckConstraint(
@@ -977,7 +1003,7 @@ class BusinessFinancials(Base):
     # Financial Information
     # --------------------------------------------------------
 
-    annual_revenue: Mapped[Decimal | None] = mapped_column(
+    verified_arr: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
     )
@@ -987,7 +1013,7 @@ class BusinessFinancials(Base):
         nullable=True,
     )
 
-    ebitda: Mapped[Decimal | None] = mapped_column(
+    verified_ebitda: Mapped[Decimal | None] = mapped_column(
         Numeric(15, 2),
         nullable=True,
     )
@@ -997,12 +1023,12 @@ class BusinessFinancials(Base):
         nullable=True,
     )
 
-    recurring_revenue_percentage: Mapped[Decimal | None] = mapped_column(
+    verified_recurring_revenue_percentage: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 2),
         nullable=True,
     )
 
-    largest_customer_percentage: Mapped[Decimal | None] = mapped_column(
+    verified_customer_concentration: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 2),
         nullable=True,
     )
@@ -1092,15 +1118,15 @@ class BusinessFinancials(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "annual_revenue IS NULL OR annual_revenue >= 0",
-            name="ck_business_financials_revenue_nonnegative",
+            "verified_arr IS NULL OR verified_arr >= 0",
+            name="ck_business_financials_arr_nonnegative",
         ),
         CheckConstraint(
             "verified_sde IS NULL OR verified_sde >= 0",
             name="ck_business_financials_sde_nonnegative",
         ),
         CheckConstraint(
-            "ebitda IS NULL OR ebitda >= 0",
+            "verified_ebitda IS NULL OR verified_ebitda >= 0",
             name="ck_business_financials_ebitda_nonnegative",
         ),
         CheckConstraint(
@@ -1113,13 +1139,13 @@ class BusinessFinancials(Base):
             name="ck_business_financials_ar_nonnegative",
         ),
         CheckConstraint(
-            "recurring_revenue_percentage IS NULL "
-            "OR recurring_revenue_percentage BETWEEN 0 AND 100",
+            "verified_recurring_revenue_percentage IS NULL "
+            "OR verified_recurring_revenue_percentage BETWEEN 0 AND 100",
             name="ck_business_financials_recurring_revenue_percentage",
         ),
         CheckConstraint(
-            "largest_customer_percentage IS NULL "
-            "OR largest_customer_percentage BETWEEN 0 AND 100",
+            "verified_customer_concentration IS NULL "
+            "OR verified_customer_concentration BETWEEN 0 AND 100",
             name="ck_business_financials_customer_percentage",
         ),
     )
@@ -1232,7 +1258,6 @@ class Document(Base):
     object_key: Mapped[str] = mapped_column(
         String(1024),
         nullable=False,
-        unique=True,
     )
 
     # --------------------------------------------------------
@@ -1337,6 +1362,7 @@ class Match(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
     )
 
     buyer_id: Mapped[UUID] = mapped_column(
@@ -1386,7 +1412,17 @@ class Match(Base):
         nullable=True,
     )
 
+    arr_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 4),
+        nullable=True,
+    )
+
     owner_involvement_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 4),
+        nullable=True,
+    )
+
+    customer_concentration_score: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 4),
         nullable=True,
     )
@@ -1405,6 +1441,21 @@ class Match(Base):
     # Weighted Contributions
     # --------------------------------------------------------
 
+    industry_contribution: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 5),
+        nullable=True,
+    )
+
+    geography_contribution: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 5),
+        nullable=True,
+    )
+
+    arr_contribution: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 5),
+        nullable=True,
+    )
+
     price_contribution: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 5),
         nullable=True,
@@ -1416,6 +1467,11 @@ class Match(Base):
     )
 
     owner_involvement_contribution: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 5),
+        nullable=True,
+    )
+
+    customer_concentration_contribution: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 5),
         nullable=True,
     )
@@ -1508,6 +1564,11 @@ class Match(Base):
         ),
 
         CheckConstraint(
+            "arr_score IS NULL OR arr_score BETWEEN 0 AND 1",
+            name="ck_match_arr_score_range",
+        ),
+
+        CheckConstraint(
             "geography_score IS NULL OR geography_score BETWEEN 0 AND 1",
             name="ck_match_geography_score_range",
         ),
@@ -1526,6 +1587,12 @@ class Match(Base):
             "owner_involvement_score IS NULL "
             "OR owner_involvement_score BETWEEN 0 AND 1",
             name="ck_match_owner_score_range",
+        ),
+
+        CheckConstraint(
+            "customer_concentration_score IS NULL "
+            "OR customer_concentration_score BETWEEN 0 AND 1",
+            name="ck_match_customer_concentration_score_range",
         ),
 
         CheckConstraint(

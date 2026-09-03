@@ -79,3 +79,9 @@ class DocumentType(str, Enum):
 class StorageProvider(str, Enum):
     CLOUDFLARE_R2 = "cloudflare_r2"
 
+
+class LenderApprovedStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
