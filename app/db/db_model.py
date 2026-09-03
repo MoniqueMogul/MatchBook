@@ -265,6 +265,7 @@ class BuyerPreferences(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
     )
 
     buyer_id: Mapped[UUID] = mapped_column(
@@ -313,6 +314,20 @@ class BuyerPreferences(Base):
     )
 
     # --------------------------------------------------------
+    # AAR
+    # --------------------------------------------------------
+
+    minimum_required_aar: Mapped[Decimal | None] = mapped_column(
+        Numeric(15, 2),
+        nullable=True,
+    )
+
+    preferred_aar: Mapped[Decimal | None] = mapped_column(
+        Numeric(15, 2),
+        nullable=True,
+    )
+
+    # --------------------------------------------------------
     # Owner Involvement
     # --------------------------------------------------------
 
@@ -348,14 +363,8 @@ class BuyerPreferences(Base):
         nullable=True,
     )
 
-
     minimum_years_in_operation: Mapped[int | None] = mapped_column(
         Integer,
-        nullable=True,
-    )
-
-    requires_recurring_revenue: Mapped[bool | None] = mapped_column(
-        Boolean,
         nullable=True,
     )
 
@@ -371,6 +380,10 @@ class BuyerPreferences(Base):
         nullable=True,
     )
 
+    # --------------------------------------------------------
+    # Timestamps
+    # --------------------------------------------------------
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -384,9 +397,17 @@ class BuyerPreferences(Base):
         nullable=False,
     )
 
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
     buyer: Mapped["BuyerProfile"] = relationship(
         back_populates="preferences",
     )
+
+    # --------------------------------------------------------
+    # Database Constraints
+    # --------------------------------------------------------
 
     __table_args__ = (
         CheckConstraint(
@@ -394,21 +415,37 @@ class BuyerPreferences(Base):
             "OR maximum_purchase_price >= 0",
             name="ck_buyer_max_price_nonnegative",
         ),
+
         CheckConstraint(
             "minimum_required_sde IS NULL "
             "OR minimum_required_sde >= 0",
             name="ck_buyer_min_sde_nonnegative",
         ),
+
         CheckConstraint(
             "preferred_sde IS NULL "
             "OR preferred_sde >= 0",
             name="ck_buyer_preferred_sde_nonnegative",
         ),
+
+        CheckConstraint(
+            "minimum_required_aar IS NULL "
+            "OR minimum_required_aar >= 0",
+            name="ck_buyer_min_aar_nonnegative",
+        ),
+
+        CheckConstraint(
+            "preferred_aar IS NULL "
+            "OR preferred_aar >= 0",
+            name="ck_buyer_preferred_aar_nonnegative",
+        ),
+
         CheckConstraint(
             "preferred_owner_hours_per_week IS NULL "
             "OR preferred_owner_hours_per_week >= 0",
             name="ck_buyer_owner_hours_nonnegative",
         ),
+
         CheckConstraint(
             "required_transition_training_days IS NULL "
             "OR required_transition_training_days >= 0",
@@ -644,7 +681,6 @@ class Business(Base):
 
     Everything required by the V1 matching engine lives here
     on the seller side:
-
         - industry
         - geography
         - asking price
@@ -652,6 +688,7 @@ class Business(Base):
         - owner involvement
         - transition training
         - deal preference
+        - preferred acquisition timeline
     """
 
     __tablename__ = "businesses"
@@ -659,6 +696,7 @@ class Business(Base):
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
+        default=uuid4,
     )
 
     seller_id: Mapped[UUID] = mapped_column(
@@ -739,6 +777,20 @@ class Business(Base):
         nullable=True,
     )
 
+    # --------------------------------------------------------
+    # Financial / Business Metrics
+    # --------------------------------------------------------
+
+    aar: Mapped[Decimal | None] = mapped_column(
+        Numeric(15, 2),
+        nullable=True,
+        index=True,
+    )
+
+    customer_concentration: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2),
+        nullable=True,
+    )
 
     # --------------------------------------------------------
     # Matching Inputs
@@ -764,10 +816,17 @@ class Business(Base):
     transition_training_days: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,
-    ) # either picks a specific number of days or selects as long as you need
+    )
+    # Seller can specify a fixed number of days or
+    # "as long as you need" at the application/schema level.
 
     deal_preference: Mapped[DealPreference | None] = mapped_column(
         String(20),
+        nullable=True,
+    )
+
+    preferred_acquisition_timeline: Mapped[str | None] = mapped_column(
+        String(50),
         nullable=True,
     )
 
@@ -802,6 +861,10 @@ class Business(Base):
         nullable=False,
     )
 
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
     seller: Mapped["SellerProfile"] = relationship(
         back_populates="businesses",
     )
@@ -817,39 +880,60 @@ class Business(Base):
         foreign_keys="Match.business_id",
     )
 
+    # --------------------------------------------------------
+    # Database Constraints
+    # --------------------------------------------------------
+
     __table_args__ = (
         CheckConstraint(
             "asking_price IS NULL OR asking_price >= 0",
             name="ck_business_asking_price_nonnegative",
         ),
+
         CheckConstraint(
             "sde IS NULL OR sde >= 0",
             name="ck_business_sde_nonnegative",
         ),
+
+        CheckConstraint(
+            "aar IS NULL OR aar >= 0",
+            name="ck_business_aar_nonnegative",
+        ),
+
+        CheckConstraint(
+            "customer_concentration IS NULL "
+            "OR (customer_concentration >= 0 "
+            "AND customer_concentration <= 100)",
+            name="ck_business_customer_concentration_percentage",
+        ),
+
         CheckConstraint(
             "owner_involvement_hours_per_week IS NULL "
             "OR owner_involvement_hours_per_week >= 0",
             name="ck_business_owner_hours_nonnegative",
         ),
+
         CheckConstraint(
             "transition_training_days IS NULL "
             "OR transition_training_days >= 0",
             name="ck_business_training_days_nonnegative",
         ),
+
         CheckConstraint(
             "years_in_operation IS NULL OR years_in_operation >= 0",
             name="ck_business_years_nonnegative",
         ),
+
         CheckConstraint(
             "number_of_locations IS NULL OR number_of_locations >= 0",
             name="ck_business_locations_nonnegative",
         ),
+
         CheckConstraint(
             "number_of_routes IS NULL OR number_of_routes >= 0",
             name="ck_business_routes_nonnegative",
         ),
     )
-
 
 # ============================================================
 # BUSINESS FINANCIALS
