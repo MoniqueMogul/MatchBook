@@ -65,22 +65,22 @@ def test_asking_price_must_be_positive_when_provided() -> None:
         BusinessCreate(**data)
 
 
-def test_business_aar_is_accepted() -> None:
+def test_business_arr_is_accepted() -> None:
 
     data = valid_business_data()
 
-    data["aar"] = 250000
+    data["arr"] = 250000
 
     business = BusinessCreate(**data)
 
-    assert business.aar == Decimal("250000")
+    assert business.arr == Decimal("250000")
 
 
-def test_negative_business_aar_is_rejected() -> None:
+def test_negative_business_arr_is_rejected() -> None:
 
     data = valid_business_data()
 
-    data["aar"] = -1
+    data["arr"] = -1
 
     with pytest.raises(ValidationError):
 

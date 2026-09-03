@@ -52,17 +52,14 @@ class BuyerPreferencesUpsert(IntakeModel):
         decimal_places=2,
     )
 
-    # NOTE:
-    # The database currently calls ARR "AAR".
-    # Intake mirrors the database name until the DB is renamed.
-    minimum_required_aar: Decimal | None = Field(
+    minimum_required_arr: Decimal | None = Field(
         default=None,
         ge=0,
         max_digits=15,
         decimal_places=2,
     )
 
-    preferred_aar: Decimal | None = Field(
+    preferred_arr: Decimal | None = Field(
         default=None,
         ge=0,
         max_digits=15,
@@ -153,13 +150,13 @@ class BuyerPreferencesUpsert(IntakeModel):
             )
 
         if (
-            self.minimum_required_aar is not None
-            and self.preferred_aar is not None
-            and self.preferred_aar < self.minimum_required_aar
+            self.minimum_required_arr is not None
+            and self.preferred_arr is not None
+            and self.preferred_arr < self.minimum_required_arr
         ):
             raise ValueError(
-                "preferred_aar must be greater than "
-                "or equal to minimum_required_aar"
+                "preferred_arr must be greater than "
+                "or equal to minimum_required_arr"
             )
 
         return self

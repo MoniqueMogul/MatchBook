@@ -50,31 +50,31 @@ def test_preferred_sde_cannot_be_below_minimum() -> None:
         )
 
 
-def test_aar_preferences_are_accepted() -> None:
+def test_arr_preferences_are_accepted() -> None:
 
     preferences = BuyerPreferencesUpsert(
-        minimum_required_aar=100000,
-        preferred_aar=200000,
+        minimum_required_arr=100000,
+        preferred_arr=200000,
     )
 
     assert (
-        preferences.minimum_required_aar
+        preferences.minimum_required_arr
         == Decimal("100000")
     )
 
     assert (
-        preferences.preferred_aar
+        preferences.preferred_arr
         == Decimal("200000")
     )
 
 
-def test_preferred_aar_cannot_be_below_minimum() -> None:
+def test_preferred_arr_cannot_be_below_minimum() -> None:
 
     with pytest.raises(ValidationError):
 
         BuyerPreferencesUpsert(
-            minimum_required_aar=200000,
-            preferred_aar=100000,
+            minimum_required_arr=200000,
+            preferred_arr=100000,
         )
 
 

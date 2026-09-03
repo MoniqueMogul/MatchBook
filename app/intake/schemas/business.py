@@ -81,8 +81,7 @@ class BusinessCreate(IntakeModel):
         ge=0,
     )
 
-    # The database currently calls ARR "AAR".
-    aar: Decimal | None = Field(
+    arr: Decimal | None = Field(
         default=None,
         ge=0,
         max_digits=15,
@@ -222,7 +221,7 @@ class BusinessUpdate(IntakeModel):
         ge=0,
     )
 
-    aar: Decimal | None = Field(
+    arr: Decimal | None = Field(
         default=None,
         ge=0,
         max_digits=15,
