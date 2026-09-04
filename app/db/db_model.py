@@ -91,6 +91,32 @@ class User(Base):
         index=True,
     )
 
+    # --------------------------------------------------------
+    # Verification
+    # --------------------------------------------------------
+
+    verification_status: Mapped[VerificationStatus] = mapped_column(
+        String(30),
+        default=VerificationStatus.UNVERIFIED,
+        nullable=False,
+        index=True,
+    )
+
+    verification_provider: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    provider_reference: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
