@@ -29,7 +29,7 @@ from app.db.db_enum import (
     DocumentType,
     StorageProvider,
     MatchStatus,
-    LenderApprovedStatus
+    LenderApprovedStatus, NDAStatus, NotificationType, EventType
 )
 
 
@@ -1341,6 +1341,11 @@ class Document(Base):
         foreign_keys=[business_financials_id],
     )
 
+    nda: Mapped["NDA | None"] = relationship(
+        back_populates="document",
+        uselist=False,
+    )
+
     __table_args__ = (
         # A document must have exactly ONE owner.
         CheckConstraint(
@@ -1550,6 +1555,12 @@ class Match(Base):
         nullable=False,
     )
 
+    nda: Mapped["NDA | None"] = relationship(
+        back_populates="match",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
     buyer: Mapped["BuyerProfile"] = relationship(
         back_populates="matches",
         foreign_keys=[buyer_id],
@@ -1558,6 +1569,12 @@ class Match(Base):
     business: Mapped["Business"] = relationship(
         back_populates="matches",
         foreign_keys=[business_id],
+    )
+
+    conversation: Mapped["Conversation | None"] = relationship(
+        back_populates="match",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -1634,3 +1651,267 @@ class Match(Base):
         ),
     )
 
+
+class NDA(Base):
+    """Confidentiality agreement associated with a specific buyer-business match."""
+
+    __tablename__ = "ndas"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    match_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("matches.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    document_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="RESTRICT"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    status: Mapped[NDAStatus] = mapped_column(
+        String(30),
+        default=NDAStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+
+    version: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    buyer_signed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    seller_signed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    match: Mapped["Match"] = relationship(
+        back_populates="nda",
+    )
+
+    document: Mapped["Document"] = relationship(
+        back_populates="nda",
+        uselist=False,
+    )
+
+
+
+class Conversation(Base):
+    """Buyer-seller communication associated with a specific Match."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    match_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("matches.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    match: Mapped["Match"] = relationship(
+        back_populates="conversation",
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
+
+
+class Message(Base):
+    """Individual message sent within a buyer-seller conversation."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    sender_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        back_populates="messages",
+    )
+
+    sender: Mapped["User"] = relationship()
+
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    type: Mapped[NotificationType] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    message: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+    )
+
+    related_entity_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    related_entity_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=True,
+    )
+
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    user: Mapped["User"] = relationship()
+
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    event_type: Mapped[EventType] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    entity_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    entity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+
+    payload: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+    )
