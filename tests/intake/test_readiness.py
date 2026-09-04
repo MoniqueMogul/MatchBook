@@ -22,7 +22,7 @@ def test_complete_buyer_preferences_are_matching_ready() -> None:
         required_transition_training_days=30,
         deal_preference="financing",
         accepts_customer_concentration_above_25_percent=False,
-        preferred_acquisition_timeline="3-6 months",
+        preferred_sale_timeline="3-6 months",
     )
 
     result = buyer_preferences_readiness(preferences)
@@ -65,7 +65,7 @@ def test_false_customer_concentration_preference_counts_as_answered() -> None:
         required_transition_training_days=30,
         deal_preference="financing",
         accepts_customer_concentration_above_25_percent=False,
-        preferred_acquisition_timeline="3-6 months",
+        preferred_sale_timeline="3-6 months",
     )
 
     result = buyer_preferences_readiness(preferences)
@@ -101,7 +101,7 @@ def test_new_matching_dimensions_are_required_for_buyer_readiness() -> None:
     )
 
     assert (
-        "preferred_acquisition_timeline"
+        "preferred_sale_timeline"
         in result.missing_fields
     )
 
@@ -120,7 +120,7 @@ def test_complete_business_is_matching_ready() -> None:
         owner_involvement_hours_per_week=20,
         transition_training_days=30,
         deal_preference="financing",
-        preferred_acquisition_timeline="3-6 months",
+        preferred_sale_timeline="3-6 months",
     )
 
     result = business_readiness(business)
@@ -149,7 +149,7 @@ def test_draft_business_is_not_matching_ready() -> None:
     assert "owner_involvement_hours_per_week" in result.missing_fields
     assert "transition_training_days" in result.missing_fields
     assert "deal_preference" in result.missing_fields
-    assert "preferred_acquisition_timeline" in result.missing_fields
+    assert "preferred_sale_timeline" in result.missing_fields
 
 
 def test_new_matching_dimensions_are_required_for_business_readiness() -> None:
@@ -174,6 +174,6 @@ def test_new_matching_dimensions_are_required_for_business_readiness() -> None:
     assert "customer_concentration" in result.missing_fields
 
     assert (
-        "preferred_acquisition_timeline"
+        "preferred_sale_timeline"
         in result.missing_fields
     )

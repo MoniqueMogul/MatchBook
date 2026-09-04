@@ -104,8 +104,8 @@ def business_readiness(
     if business.deal_preference is None:
         missing.append("deal_preference")
 
-    if business.preferred_acquisition_timeline is None:
-        missing.append("preferred_acquisition_timeline")
+    if business.preferred_sale_timeline is None:
+        missing.append("preferred_sale_timeline")
 
     return ReadinessResult(
         ready=not missing,

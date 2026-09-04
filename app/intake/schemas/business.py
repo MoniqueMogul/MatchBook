@@ -11,7 +11,7 @@ _OPTIONAL_TEXT_FIELDS = (
     "dba",
     "county",
     "zip_code",
-    "preferred_acquisition_timeline",
+    "preferred_sale_timeline",
 )
 
 
@@ -123,7 +123,7 @@ class BusinessCreate(IntakeModel):
 
     deal_preference: DealPreference | None = None
 
-    preferred_acquisition_timeline: str | None = Field(
+    preferred_sale_timeline: str | None = Field(
         default=None,
         max_length=50,
     )
@@ -263,7 +263,7 @@ class BusinessUpdate(IntakeModel):
 
     deal_preference: DealPreference | None = None
 
-    preferred_acquisition_timeline: str | None = Field(
+    preferred_sale_timeline: str | None = Field(
         default=None,
         max_length=50,
     )
