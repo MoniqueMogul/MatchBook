@@ -371,10 +371,10 @@ class BuyerPreferences(Base):
     )
 
     accepts_customer_concentration_above_25_percent: Mapped[
-        bool
+        bool | None
     ] = mapped_column(
         Boolean,
-        nullable=False,
+        nullable=True,
     )
 
     preferred_acquisition_timeline: Mapped[str | None] = mapped_column(
