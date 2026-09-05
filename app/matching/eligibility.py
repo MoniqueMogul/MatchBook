@@ -11,9 +11,11 @@ class EligibilityResult:
     failed_constraints: list[str]
 
 
-def _normalize_text(value: str | None) -> str | None:
+def _normalize_text(
+    value: str | None,
+) -> str | None:
     """
-    Normalize text values for deterministic matching.
+    Normalize text for deterministic comparisons.
     """
     if value is None:
         return None
@@ -23,38 +25,47 @@ def _normalize_text(value: str | None) -> str | None:
     return normalized or None
 
 
+# ============================================================
+# INDUSTRY
+# ============================================================
+
+
 def check_industry_eligibility(
     target_industries: list[str] | None,
     business_industry: str | None,
 ) -> bool:
     """
-    Industry is a V1 hard filter.
-
-    A business passes when its industry matches one of the buyer's
-    selected target industries.
-
-    If the buyer has no configured target industries, the constraint
-    is treated as unrestricted.
+    Industry is a V1 hard eligibility filter.
     """
     if not target_industries:
         return True
 
-    normalized_business_industry = _normalize_text(
+    normalized_business = _normalize_text(
         business_industry
     )
 
-    if normalized_business_industry is None:
+    if normalized_business is None:
         return False
 
     normalized_targets = {
         normalized
         for industry in target_industries
         if (
-            normalized := _normalize_text(industry)
+            normalized := _normalize_text(
+                industry
+            )
         ) is not None
     }
 
-    return normalized_business_industry in normalized_targets
+    return (
+        normalized_business
+        in normalized_targets
+    )
+
+
+# ============================================================
+# GEOGRAPHY
+# ============================================================
 
 
 def check_geography_eligibility(
@@ -67,46 +78,68 @@ def check_geography_eligibility(
     """
     Geography is a deterministic V1 hard filter.
 
-    Supported V1 buyer location fields:
-    - state
-    - city
-    - county
-
-    Each configured buyer requirement must be satisfied.
+    Supported fields:
+        state
+        city
+        county
     """
     if not target_locations:
         return True
 
     business_location = {
-        "city": _normalize_text(business_city),
-        "county": _normalize_text(business_county),
-        "state": _normalize_text(business_state),
+        "city": _normalize_text(
+            business_city
+        ),
+        "county": _normalize_text(
+            business_county
+        ),
+        "state": _normalize_text(
+            business_state
+        ),
     }
 
-    for field in ("state", "city", "county"):
-        requested_value = target_locations.get(field)
+    for field in (
+        "state",
+        "city",
+        "county",
+    ):
+        requested = target_locations.get(
+            field
+        )
 
-        if requested_value is None:
+        if requested is None:
             continue
 
-        if isinstance(requested_value, str):
-            normalized_value = _normalize_text(
-                requested_value
+        if isinstance(
+            requested,
+            str,
+        ):
+            normalized = _normalize_text(
+                requested
             )
 
             acceptable_values = (
-                {normalized_value}
-                if normalized_value is not None
+                {normalized}
+                if normalized is not None
                 else set()
             )
 
-        elif isinstance(requested_value, list):
+        elif isinstance(
+            requested,
+            list,
+        ):
             acceptable_values = {
                 normalized
-                for value in requested_value
-                if isinstance(value, str)
+                for value in requested
+                if isinstance(
+                    value,
+                    str,
+                )
                 and (
-                    normalized := _normalize_text(value)
+                    normalized
+                    := _normalize_text(
+                        value
+                    )
                 ) is not None
             }
 
@@ -123,22 +156,32 @@ def check_geography_eligibility(
     return True
 
 
+# ============================================================
+# PURCHASE PRICE
+# ============================================================
+
+
 def calculate_absolute_price_ceiling(
     maximum_purchase_price: Decimal,
     price_tolerance: float = PRICE_TOLERANCE,
 ) -> Decimal:
     """
-    Calculate the V1 absolute purchase-price ceiling.
+    Absolute price ceiling:
 
-    Absolute Ceiling =
-        Maximum Purchase Price × (1 + tolerance)
-
-    V1 tolerance = 15%.
+        max purchase price × (1 + tolerance)
     """
-    tolerance = Decimal(str(price_tolerance))
+    tolerance = Decimal(
+        str(
+            price_tolerance
+        )
+    )
 
-    return maximum_purchase_price * (
-        Decimal("1") + tolerance
+    return (
+        maximum_purchase_price
+        * (
+            Decimal("1")
+            + tolerance
+        )
     )
 
 
@@ -148,14 +191,7 @@ def check_purchase_price_eligibility(
     price_tolerance: float = PRICE_TOLERANCE,
 ) -> bool:
     """
-    Purchase price is a V1 hard filter.
-
-    Candidate passes when:
-
-        asking_price <= maximum_purchase_price × 1.15
-
-    If the buyer has no maximum configured, the constraint is
-    treated as unrestricted.
+    V1 hard purchase-price filter.
     """
     if maximum_purchase_price is None:
         return True
@@ -163,12 +199,22 @@ def check_purchase_price_eligibility(
     if asking_price is None:
         return False
 
-    absolute_ceiling = calculate_absolute_price_ceiling(
-        maximum_purchase_price,
-        price_tolerance,
+    absolute_ceiling = (
+        calculate_absolute_price_ceiling(
+            maximum_purchase_price,
+            price_tolerance,
+        )
     )
 
-    return asking_price <= absolute_ceiling
+    return (
+        asking_price
+        <= absolute_ceiling
+    )
+
+
+# ============================================================
+# MINIMUM SDE
+# ============================================================
 
 
 def check_sde_eligibility(
@@ -176,14 +222,7 @@ def check_sde_eligibility(
     seller_sde: Decimal | None,
 ) -> bool:
     """
-    SDE is a V1 hard filter.
-
-    Candidate passes when:
-
-        seller_sde >= buyer minimum SDE
-
-    If the buyer has no minimum SDE configured, the constraint
-    is treated as unrestricted.
+    Seller must meet buyer's minimum required SDE.
     """
     if minimum_sde is None:
         return True
@@ -191,7 +230,73 @@ def check_sde_eligibility(
     if seller_sde is None:
         return False
 
-    return seller_sde >= minimum_sde
+    return (
+        seller_sde
+        >= minimum_sde
+    )
+
+
+# ============================================================
+# MINIMUM ARR
+# ============================================================
+
+
+def check_arr_eligibility(
+    minimum_arr: Decimal | None,
+    seller_arr: Decimal | None,
+) -> bool:
+    """
+    Seller must meet buyer's minimum required ARR.
+
+    ARR remains a scoring dimension after the candidate passes
+    this hard minimum requirement.
+    """
+    if (
+        minimum_arr is None
+        or minimum_arr <= Decimal("0")
+    ):
+        return True
+
+    if seller_arr is None:
+        return False
+
+    return (
+        seller_arr
+        >= minimum_arr
+    )
+
+
+# ============================================================
+# MINIMUM YEARS IN OPERATION
+# ============================================================
+
+
+def check_years_in_operation_eligibility(
+    minimum_years: int | None,
+    business_years: int | None,
+) -> bool:
+    """
+    Seller/business must meet the buyer's minimum years
+    in operation requirement.
+    """
+    if (
+        minimum_years is None
+        or minimum_years <= 0
+    ):
+        return True
+
+    if business_years is None:
+        return False
+
+    return (
+        business_years
+        >= minimum_years
+    )
+
+
+# ============================================================
+# COMPLETE V1 ELIGIBILITY
+# ============================================================
 
 
 def evaluate_eligibility(
@@ -206,18 +311,27 @@ def evaluate_eligibility(
     business_state: str | None,
     asking_price: Decimal | None,
     seller_sde: Decimal | None,
+
+    # Added V1 constraints.
+    minimum_arr: Decimal | None = None,
+    seller_arr: Decimal | None = None,
+    minimum_years_in_operation: int | None = None,
+    business_years_in_operation: int | None = None,
 ) -> EligibilityResult:
     """
-    Evaluate all V1 hard eligibility constraints.
+    Evaluate V1 hard eligibility constraints.
 
-    V1 flow:
+    Current sequence:
+
         Industry
         Geography
-        Purchase Price Ceiling
+        Purchase Price
         Minimum SDE
+        Minimum ARR
+        Minimum Years in Operation
 
-    Any failed required hard filter rejects the candidate before
-    compatibility scoring.
+    A candidate that fails any hard constraint does not proceed
+    to compatibility scoring.
     """
     failures: list[str] = []
 
@@ -225,7 +339,9 @@ def evaluate_eligibility(
         target_industries,
         business_industry,
     ):
-        failures.append("industry")
+        failures.append(
+            "industry"
+        )
 
     if not check_geography_eligibility(
         target_locations,
@@ -233,21 +349,48 @@ def evaluate_eligibility(
         business_county=business_county,
         business_state=business_state,
     ):
-        failures.append("geography")
+        failures.append(
+            "geography"
+        )
 
     if not check_purchase_price_eligibility(
         maximum_purchase_price,
         asking_price,
     ):
-        failures.append("purchase_price")
+        failures.append(
+            "purchase_price"
+        )
 
     if not check_sde_eligibility(
         minimum_sde,
         seller_sde,
     ):
-        failures.append("sde")
+        failures.append(
+            "sde"
+        )
+
+    if not check_arr_eligibility(
+        minimum_arr,
+        seller_arr,
+    ):
+        failures.append(
+            "arr"
+        )
+
+    if not check_years_in_operation_eligibility(
+        minimum_years_in_operation,
+        business_years_in_operation,
+    ):
+        failures.append(
+            "years_in_operation"
+        )
 
     return EligibilityResult(
-        eligible=len(failures) == 0,
+        eligible=(
+            len(
+                failures
+            )
+            == 0
+        ),
         failed_constraints=failures,
     )

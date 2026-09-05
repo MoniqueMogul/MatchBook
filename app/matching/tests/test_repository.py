@@ -34,6 +34,7 @@ from app.matching.schemas import (
 def make_buyer_preferences() -> BuyerPreferences:
     return BuyerPreferences(
         id=uuid4(),
+
         buyer_id=uuid4(),
 
         target_industries=[
@@ -68,7 +69,9 @@ def make_buyer_preferences() -> BuyerPreferences:
 
         required_transition_training_days=30,
 
-        deal_preference=DealPreference.CASH,
+        deal_preference=(
+            DealPreference.CASH
+        ),
 
         minimum_years_in_operation=3,
 
@@ -79,14 +82,21 @@ def make_buyer_preferences() -> BuyerPreferences:
 def make_business() -> Business:
     return Business(
         id=uuid4(),
+
         seller_id=uuid4(),
 
-        business_type="Service Business",
+        business_type=(
+            "Service Business"
+        ),
+
         industry="HVAC",
 
         city="Orlando",
+
         county="Orange",
+
         state="Florida",
+
         zip_code="32801",
 
         years_in_operation=10,
@@ -111,9 +121,13 @@ def make_business() -> Business:
 
         transition_training_days=30,
 
-        deal_preference=DealPreference.CASH,
+        deal_preference=(
+            DealPreference.CASH
+        ),
 
-        status=BusinessStatus.ACTIVE,
+        status=(
+            BusinessStatus.ACTIVE
+        ),
     )
 
 
@@ -123,6 +137,7 @@ def make_evaluation(
     business_id=None,
     score=0.855,
 ) -> MatchEvaluation:
+
     buyer_id = (
         buyer_id
         or uuid4()
@@ -134,72 +149,104 @@ def make_evaluation(
     )
 
     dimensions = {
-        "industry": DimensionScore(
-            score=1.0,
-            weight=0.0,
-            contribution=0.0,
+        "industry": (
+            DimensionScore(
+                score=1.0,
+                weight=0.0,
+                contribution=0.0,
+            )
         ),
 
-        "geography": DimensionScore(
-            score=1.0,
-            weight=0.0,
-            contribution=0.0,
+        "geography": (
+            DimensionScore(
+                score=1.0,
+                weight=0.0,
+                contribution=0.0,
+            )
         ),
 
-        "purchase_price": DimensionScore(
-            score=0.8,
-            weight=0.30,
-            contribution=0.24,
+        "purchase_price": (
+            DimensionScore(
+                score=0.8,
+                weight=0.30,
+                contribution=0.24,
+            )
         ),
 
-        "sde": DimensionScore(
-            score=1.0,
-            weight=0.30,
-            contribution=0.30,
+        "sde": (
+            DimensionScore(
+                score=1.0,
+                weight=0.30,
+                contribution=0.30,
+            )
         ),
 
-        "owner_involvement": DimensionScore(
-            score=0.75,
-            weight=0.10,
-            contribution=0.075,
+        "owner_involvement": (
+            DimensionScore(
+                score=0.75,
+                weight=0.10,
+                contribution=0.075,
+            )
         ),
 
-        "transition_training": DimensionScore(
-            score=0.75,
-            weight=0.10,
-            contribution=0.075,
+        "transition_training": (
+            DimensionScore(
+                score=0.75,
+                weight=0.10,
+                contribution=0.075,
+            )
         ),
 
-        "deal_preference": DimensionScore(
-            score=1.0,
-            weight=0.10,
-            contribution=0.10,
+        "deal_preference": (
+            DimensionScore(
+                score=1.0,
+                weight=0.10,
+                contribution=0.10,
+            )
         ),
 
-        "arr": DimensionScore(
-            score=0.8,
-            weight=0.05,
-            contribution=0.04,
+        "arr": (
+            DimensionScore(
+                score=0.8,
+                weight=0.05,
+                contribution=0.04,
+            )
         ),
 
-        "customer_concentration": DimensionScore(
-            score=0.5,
-            weight=0.05,
-            contribution=0.025,
+        "customer_concentration": (
+            DimensionScore(
+                score=0.5,
+                weight=0.05,
+                contribution=0.025,
+            )
         ),
     }
 
     return MatchEvaluation(
-        buyer_id=buyer_id,
-        business_id=business_id,
+        buyer_id=(
+            buyer_id
+        ),
+
+        business_id=(
+            business_id
+        ),
 
         eligible=True,
+
         failed_constraints=[],
 
-        score=score,
-        percentage=score * 100,
+        score=(
+            score
+        ),
 
-        dimensions=dimensions,
+        percentage=(
+            score
+            * 100
+        ),
+
+        dimensions=(
+            dimensions
+        ),
 
         meets_threshold=True,
     )
@@ -211,10 +258,14 @@ def make_evaluation(
 
 
 def test_build_buyer_match_input():
-    preferences = make_buyer_preferences()
+    preferences = (
+        make_buyer_preferences()
+    )
 
-    result = build_buyer_match_input(
-        preferences
+    result = (
+        build_buyer_match_input(
+            preferences
+        )
     )
 
     assert (
@@ -224,32 +275,44 @@ def test_build_buyer_match_input():
 
     assert (
         result.target_industries
-        == ["HVAC"]
+        == [
+            "HVAC",
+        ]
     )
 
     assert (
         result.maximum_purchase_price
-        == Decimal("500000")
+        == Decimal(
+            "500000"
+        )
     )
 
     assert (
         result.minimum_sde
-        == Decimal("100000")
+        == Decimal(
+            "100000"
+        )
     )
 
     assert (
         result.preferred_sde
-        == Decimal("200000")
+        == Decimal(
+            "200000"
+        )
     )
 
     assert (
         result.minimum_arr
-        == Decimal("200000")
+        == Decimal(
+            "200000"
+        )
     )
 
     assert (
         result.preferred_arr
-        == Decimal("500000")
+        == Decimal(
+            "500000"
+        )
     )
 
     assert (
@@ -272,11 +335,20 @@ def test_build_buyer_match_input():
         is False
     )
 
+    assert (
+        result.minimum_years_in_operation
+        == 3
+    )
+
 
 def test_buyer_missing_required_scoring_field_fails():
-    preferences = make_buyer_preferences()
+    preferences = (
+        make_buyer_preferences()
+    )
 
-    preferences.preferred_sde = None
+    preferences.preferred_sde = (
+        None
+    )
 
     with pytest.raises(
         MatchingDataIncompleteError
@@ -287,17 +359,25 @@ def test_buyer_missing_required_scoring_field_fails():
 
 
 def test_missing_minimum_arr_defaults_to_zero():
-    preferences = make_buyer_preferences()
+    preferences = (
+        make_buyer_preferences()
+    )
 
-    preferences.minimum_required_arr = None
+    preferences.minimum_required_arr = (
+        None
+    )
 
-    result = build_buyer_match_input(
-        preferences
+    result = (
+        build_buyer_match_input(
+            preferences
+        )
     )
 
     assert (
         result.minimum_arr
-        == Decimal("0")
+        == Decimal(
+            "0"
+        )
     )
 
 
@@ -307,10 +387,14 @@ def test_missing_minimum_arr_defaults_to_zero():
 
 
 def test_build_business_match_input():
-    business = make_business()
+    business = (
+        make_business()
+    )
 
-    result = build_business_match_input(
-        business
+    result = (
+        build_business_match_input(
+            business
+        )
     )
 
     assert (
@@ -330,17 +414,23 @@ def test_build_business_match_input():
 
     assert (
         result.asking_price
-        == Decimal("500000")
+        == Decimal(
+            "500000"
+        )
     )
 
     assert (
         result.sde
-        == Decimal("200000")
+        == Decimal(
+            "200000"
+        )
     )
 
     assert (
         result.arr
-        == Decimal("500000")
+        == Decimal(
+            "500000"
+        )
     )
 
     assert (
@@ -363,9 +453,16 @@ def test_build_business_match_input():
         == 20.0
     )
 
+    assert (
+        result.years_in_operation
+        == 10
+    )
+
 
 def test_business_missing_arr_fails():
-    business = make_business()
+    business = (
+        make_business()
+    )
 
     business.arr = None
 
@@ -378,9 +475,13 @@ def test_business_missing_arr_fails():
 
 
 def test_business_missing_customer_concentration_fails():
-    business = make_business()
+    business = (
+        make_business()
+    )
 
-    business.customer_concentration = None
+    business.customer_concentration = (
+        None
+    )
 
     with pytest.raises(
         MatchingDataIncompleteError
@@ -396,10 +497,14 @@ def test_business_missing_customer_concentration_fails():
 
 
 def test_score_breakdown_contains_explainability_data():
-    evaluation = make_evaluation()
+    evaluation = (
+        make_evaluation()
+    )
 
-    breakdown = build_score_breakdown(
-        evaluation
+    breakdown = (
+        build_score_breakdown(
+            evaluation
+        )
     )
 
     assert (
@@ -447,7 +552,7 @@ def test_score_breakdown_contains_explainability_data():
 
 
 # ============================================================
-# EXISTING MATCH LOOKUP
+# EXISTING MATCH
 # ============================================================
 
 
@@ -468,26 +573,35 @@ def test_get_existing_match_returns_session_result():
         uuid4(),
     )
 
-    assert result is existing
+    assert (
+        result
+        is existing
+    )
 
     session.scalar.assert_called_once()
 
 
 # ============================================================
-# UPSERT MATCH
+# UPSERT
 # ============================================================
 
 
 def test_upsert_creates_new_match():
     session = Mock()
 
-    session.scalar.return_value = None
+    session.scalar.return_value = (
+        None
+    )
 
-    evaluation = make_evaluation()
+    evaluation = (
+        make_evaluation()
+    )
 
-    result = upsert_match(
-        session,
-        evaluation,
+    result = (
+        upsert_match(
+            session,
+            evaluation,
+        )
     )
 
     assert isinstance(
@@ -507,7 +621,9 @@ def test_upsert_creates_new_match():
 
     assert (
         result.score
-        == Decimal("0.855")
+        == Decimal(
+            "0.855"
+        )
     )
 
     assert (
@@ -517,32 +633,44 @@ def test_upsert_creates_new_match():
 
     assert (
         result.price_score
-        == Decimal("0.8")
+        == Decimal(
+            "0.8"
+        )
     )
 
     assert (
         result.arr_score
-        == Decimal("0.8")
+        == Decimal(
+            "0.8"
+        )
     )
 
     assert (
         result.customer_concentration_score
-        == Decimal("0.5")
+        == Decimal(
+            "0.5"
+        )
     )
 
     assert (
         result.price_contribution
-        == Decimal("0.24")
+        == Decimal(
+            "0.24"
+        )
     )
 
     assert (
         result.arr_contribution
-        == Decimal("0.04")
+        == Decimal(
+            "0.04"
+        )
     )
 
     assert (
         result.customer_concentration_contribution
-        == Decimal("0.025")
+        == Decimal(
+            "0.025"
+        )
     )
 
     session.add.assert_called_once_with(
@@ -552,17 +680,28 @@ def test_upsert_creates_new_match():
     session.flush.assert_called_once()
 
 
-def test_upsert_updates_existing_match_without_adding_duplicate():
+def test_upsert_updates_existing_match_without_duplicate():
     session = Mock()
 
     buyer_id = uuid4()
+
     business_id = uuid4()
 
     existing = Match(
         id=uuid4(),
-        buyer_id=buyer_id,
-        business_id=business_id,
-        score=Decimal("0.50"),
+
+        buyer_id=(
+            buyer_id
+        ),
+
+        business_id=(
+            business_id
+        ),
+
+        score=Decimal(
+            "0.50"
+        ),
+
         matching_version="v1",
     )
 
@@ -570,29 +709,42 @@ def test_upsert_updates_existing_match_without_adding_duplicate():
         existing
     )
 
-    evaluation = make_evaluation(
-        buyer_id=buyer_id,
-        business_id=business_id,
-        score=0.855,
+    evaluation = (
+        make_evaluation(
+            buyer_id=(
+                buyer_id
+            ),
+            business_id=(
+                business_id
+            ),
+            score=0.855,
+        )
     )
 
-    result = upsert_match(
-        session,
-        evaluation,
+    result = (
+        upsert_match(
+            session,
+            evaluation,
+        )
     )
 
     assert (
-        result is existing
+        result
+        is existing
     )
 
     assert (
         result.score
-        == Decimal("0.855")
+        == Decimal(
+            "0.855"
+        )
     )
 
     assert (
         result.price_score
-        == Decimal("0.8")
+        == Decimal(
+            "0.8"
+        )
     )
 
     assert (
@@ -610,6 +762,7 @@ def test_ineligible_evaluation_is_not_persisted():
 
     evaluation = MatchEvaluation(
         buyer_id=uuid4(),
+
         business_id=uuid4(),
 
         eligible=False,
@@ -619,6 +772,7 @@ def test_ineligible_evaluation_is_not_persisted():
         ],
 
         score=None,
+
         percentage=None,
 
         dimensions={},
@@ -640,13 +794,19 @@ def test_ineligible_evaluation_is_not_persisted():
 def test_match_score_breakdown_is_persisted():
     session = Mock()
 
-    session.scalar.return_value = None
+    session.scalar.return_value = (
+        None
+    )
 
-    evaluation = make_evaluation()
+    evaluation = (
+        make_evaluation()
+    )
 
-    result = upsert_match(
-        session,
-        evaluation,
+    result = (
+        upsert_match(
+            session,
+            evaluation,
+        )
     )
 
     assert (
@@ -674,9 +834,13 @@ def test_match_score_breakdown_is_persisted():
 def test_upsert_does_not_commit_transaction():
     session = Mock()
 
-    session.scalar.return_value = None
+    session.scalar.return_value = (
+        None
+    )
 
-    evaluation = make_evaluation()
+    evaluation = (
+        make_evaluation()
+    )
 
     upsert_match(
         session,

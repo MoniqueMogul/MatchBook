@@ -29,26 +29,26 @@ from app.matching.schemas import (
 
 class MatchingRepositoryError(Exception):
     """
-    Base exception for Matching repository errors.
+    Base exception for Matching Engine repository errors.
     """
 
 
 class MatchingDataNotFoundError(MatchingRepositoryError):
     """
-    Raised when required matching records cannot be found.
+    Raised when a required database record cannot be found.
     """
 
 
 class MatchingDataIncompleteError(MatchingRepositoryError):
     """
-    Raised when records exist but required V1 matching
-    fields are missing.
+    Raised when a database record exists but does not contain
+    the fields required by the V1 Matching Engine.
     """
 
 
 def _enum_value(value: Any) -> Any:
     """
-    Convert Enum values to their persisted/string value.
+    Convert Enum values to their persisted/string values.
     """
     if isinstance(value, Enum):
         return value.value
@@ -56,32 +56,29 @@ def _enum_value(value: Any) -> Any:
     return value
 
 
-def _to_decimal(
-    value: Any,
-) -> Decimal | None:
-    """
-    Safely convert database numeric values to Decimal.
-    """
-    if value is None:
-        return None
-
-    if isinstance(value, Decimal):
-        return value
-
-    return Decimal(str(value))
-
-
 def _score_decimal(
     value: float | None,
 ) -> Decimal | None:
     """
-    Convert an in-memory score to Decimal for SQLAlchemy
-    Numeric persistence.
+    Convert an in-memory floating-point score into Decimal
+    for SQLAlchemy Numeric persistence.
     """
     if value is None:
         return None
 
-    return Decimal(str(round(value, 10)))
+    return Decimal(
+        str(
+            round(
+                value,
+                10,
+            )
+        )
+    )
+
+
+# ============================================================
+# DATABASE LOOKUPS
+# ============================================================
 
 
 def get_buyer_preferences(
@@ -89,13 +86,17 @@ def get_buyer_preferences(
     buyer_id: UUID,
 ) -> BuyerPreferences:
     """
-    Load the buyer preferences used by the V1 matching engine.
+    Load BuyerPreferences for one buyer.
     """
 
-    statement = select(
-        BuyerPreferences
-    ).where(
-        BuyerPreferences.buyer_id == buyer_id
+    statement = (
+        select(
+            BuyerPreferences
+        )
+        .where(
+            BuyerPreferences.buyer_id
+            == buyer_id
+        )
     )
 
     preferences = session.scalar(
@@ -104,7 +105,8 @@ def get_buyer_preferences(
 
     if preferences is None:
         raise MatchingDataNotFoundError(
-            f"No BuyerPreferences found for buyer_id={buyer_id}"
+            "No BuyerPreferences found "
+            f"for buyer_id={buyer_id}"
         )
 
     return preferences
@@ -115,13 +117,17 @@ def get_business(
     business_id: UUID,
 ) -> Business:
     """
-    Load one business.
+    Load one business record.
     """
 
-    statement = select(
-        Business
-    ).where(
-        Business.id == business_id
+    statement = (
+        select(
+            Business
+        )
+        .where(
+            Business.id
+            == business_id
+        )
     )
 
     business = session.scalar(
@@ -130,7 +136,8 @@ def get_business(
 
     if business is None:
         raise MatchingDataNotFoundError(
-            f"No Business found for business_id={business_id}"
+            "No Business found "
+            f"for business_id={business_id}"
         )
 
     return business
@@ -141,107 +148,142 @@ def get_candidate_businesses(
     preferences: BuyerPreferences,
 ) -> list[Business]:
     """
-    Retrieve a candidate set using inexpensive V1 hard
-    constraints before detailed compatibility scoring.
+    Retrieve candidate businesses using inexpensive database-level
+    hard constraints before detailed Matching Engine evaluation.
 
-    PostgreSQL remains the system of record.
+    PostgreSQL remains the source of truth.
 
-    Filters applied here when configured:
+    Current pre-filters:
         - Active business
         - Industry
-        - Maximum purchase price + V1 tolerance
-        - Minimum required SDE
-        - Minimum required ARR
+        - Maximum purchase price + tolerance
+        - Minimum SDE
+        - Minimum ARR
         - Minimum years in operation
 
-    Geography remains in the deterministic Matching service
-    because target_locations is JSONB and may contain different
-    levels such as state/city/county.
+    Geography is still evaluated by the pure eligibility layer
+    because target_locations is structured JSON data.
     """
 
-    statement = select(
-        Business
-    ).where(
-        Business.status == BusinessStatus.ACTIVE
+    statement = (
+        select(
+            Business
+        )
+        .where(
+            Business.status
+            == BusinessStatus.ACTIVE
+        )
     )
 
     # --------------------------------------------------------
-    # Industry
+    # INDUSTRY
     # --------------------------------------------------------
 
     if preferences.target_industries:
         industries = [
-            str(industry).strip()
-            for industry in preferences.target_industries
-            if str(industry).strip()
+            str(
+                industry
+            ).strip()
+            for industry
+            in preferences.target_industries
+            if str(
+                industry
+            ).strip()
         ]
 
         if industries:
-            statement = statement.where(
-                Business.industry.in_(
-                    industries
+            statement = (
+                statement.where(
+                    Business.industry.in_(
+                        industries
+                    )
                 )
             )
 
     # --------------------------------------------------------
-    # Purchase Price
+    # PURCHASE PRICE
     # --------------------------------------------------------
 
-    if preferences.maximum_purchase_price is not None:
+    if (
+        preferences.maximum_purchase_price
+        is not None
+    ):
         tolerance = Decimal(
-            str(PRICE_TOLERANCE)
+            str(
+                PRICE_TOLERANCE
+            )
         )
 
         absolute_ceiling = (
             preferences.maximum_purchase_price
-            * (Decimal("1") + tolerance)
+            * (
+                Decimal("1")
+                + tolerance
+            )
         )
 
-        statement = statement.where(
-            Business.asking_price.is_not(
-                None
-            ),
-            Business.asking_price
-            <= absolute_ceiling,
-        )
-
-    # --------------------------------------------------------
-    # Minimum SDE
-    # --------------------------------------------------------
-
-    if preferences.minimum_required_sde is not None:
-        statement = statement.where(
-            Business.sde.is_not(
-                None
-            ),
-            Business.sde
-            >= preferences.minimum_required_sde,
+        statement = (
+            statement.where(
+                Business.asking_price.is_not(
+                    None
+                ),
+                Business.asking_price
+                <= absolute_ceiling,
+            )
         )
 
     # --------------------------------------------------------
-    # Minimum ARR
+    # MINIMUM SDE
     # --------------------------------------------------------
 
-    if preferences.minimum_required_arr is not None:
-        statement = statement.where(
-            Business.arr.is_not(
-                None
-            ),
-            Business.arr
-            >= preferences.minimum_required_arr,
+    if (
+        preferences.minimum_required_sde
+        is not None
+    ):
+        statement = (
+            statement.where(
+                Business.sde.is_not(
+                    None
+                ),
+                Business.sde
+                >= preferences.minimum_required_sde,
+            )
         )
 
     # --------------------------------------------------------
-    # Minimum Years in Operation
+    # MINIMUM ARR
     # --------------------------------------------------------
 
-    if preferences.minimum_years_in_operation is not None:
-        statement = statement.where(
-            Business.years_in_operation.is_not(
-                None
-            ),
-            Business.years_in_operation
-            >= preferences.minimum_years_in_operation,
+    if (
+        preferences.minimum_required_arr
+        is not None
+    ):
+        statement = (
+            statement.where(
+                Business.arr.is_not(
+                    None
+                ),
+                Business.arr
+                >= preferences.minimum_required_arr,
+            )
+        )
+
+    # --------------------------------------------------------
+    # MINIMUM YEARS IN OPERATION
+    # --------------------------------------------------------
+
+    if (
+        preferences.minimum_years_in_operation
+        is not None
+    ):
+        statement = (
+            statement.where(
+                Business.years_in_operation.is_not(
+                    None
+                ),
+                Business.years_in_operation
+                >= preferences.minimum_years_in_operation,
+            )
         )
 
     result = session.scalars(
@@ -253,16 +295,19 @@ def get_candidate_businesses(
     )
 
 
+# ============================================================
+# DATABASE MODEL -> MATCHING ENGINE INPUT
+# ============================================================
+
+
 def build_buyer_match_input(
     preferences: BuyerPreferences,
 ) -> BuyerMatchInput:
     """
-    Convert the SQLAlchemy BuyerPreferences record into the
-    pure Matching Engine input structure.
+    Convert BuyerPreferences into the pure Matching Engine input.
 
-    We fail explicitly when a field required by the current
-    deterministic scoring engine is missing rather than silently
-    inventing matching values.
+    Required scoring fields are validated explicitly rather than
+    silently inventing values.
     """
 
     missing: list[str] = []
@@ -272,12 +317,18 @@ def build_buyer_match_input(
             "preferred_sde"
         )
 
-    if preferences.preferred_owner_hours_per_week is None:
+    if (
+        preferences.preferred_owner_hours_per_week
+        is None
+    ):
         missing.append(
             "preferred_owner_hours_per_week"
         )
 
-    if preferences.required_transition_training_days is None:
+    if (
+        preferences.required_transition_training_days
+        is None
+    ):
         missing.append(
             "required_transition_training_days"
         )
@@ -302,21 +353,34 @@ def build_buyer_match_input(
 
     if missing:
         raise MatchingDataIncompleteError(
-            "BuyerPreferences is not ready for V1 matching. "
-            f"Missing fields: {', '.join(missing)}"
+            "BuyerPreferences is not ready "
+            "for V1 matching. Missing fields: "
+            + ", ".join(
+                missing
+            )
         )
 
     minimum_arr = (
         preferences.minimum_required_arr
-        if preferences.minimum_required_arr is not None
+        if (
+            preferences.minimum_required_arr
+            is not None
+        )
         else Decimal("0")
     )
 
     return BuyerMatchInput(
-        buyer_id=preferences.buyer_id,
+        buyer_id=(
+            preferences.buyer_id
+        ),
 
-        target_industries=preferences.target_industries,
-        target_locations=preferences.target_locations,
+        target_industries=(
+            preferences.target_industries
+        ),
+
+        target_locations=(
+            preferences.target_locations
+        ),
 
         maximum_purchase_price=(
             preferences.maximum_purchase_price
@@ -344,7 +408,9 @@ def build_buyer_match_input(
             )
         ),
 
-        minimum_arr=minimum_arr,
+        minimum_arr=(
+            minimum_arr
+        ),
 
         preferred_arr=(
             preferences.preferred_arr
@@ -353,6 +419,10 @@ def build_buyer_match_input(
         accepts_customer_concentration_above_25_percent=bool(
             preferences.accepts_customer_concentration_above_25_percent
         ),
+
+        minimum_years_in_operation=(
+            preferences.minimum_years_in_operation
+        ),
     )
 
 
@@ -360,10 +430,7 @@ def build_business_match_input(
     business: Business,
 ) -> BusinessMatchInput:
     """
-    Convert a seller-reported Business record into the pure
-    Matching Engine input structure.
-
-    BusinessFinancials is intentionally not used for V1 matching.
+    Convert Business into the pure Matching Engine input.
     """
 
     missing: list[str] = []
@@ -383,12 +450,18 @@ def build_business_match_input(
             "arr"
         )
 
-    if business.owner_involvement_hours_per_week is None:
+    if (
+        business.owner_involvement_hours_per_week
+        is None
+    ):
         missing.append(
             "owner_involvement_hours_per_week"
         )
 
-    if business.transition_training_days is None:
+    if (
+        business.transition_training_days
+        is None
+    ):
         missing.append(
             "transition_training_days"
         )
@@ -398,26 +471,45 @@ def build_business_match_input(
             "deal_preference"
         )
 
-    if business.customer_concentration is None:
+    if (
+        business.customer_concentration
+        is None
+    ):
         missing.append(
             "customer_concentration"
         )
 
     if missing:
         raise MatchingDataIncompleteError(
-            "Business is not ready for V1 matching. "
+            "Business is not ready for "
+            "V1 matching. "
             f"business_id={business.id}. "
-            f"Missing fields: {', '.join(missing)}"
+            "Missing fields: "
+            + ", ".join(
+                missing
+            )
         )
 
     return BusinessMatchInput(
-        business_id=business.id,
+        business_id=(
+            business.id
+        ),
 
-        industry=business.industry,
+        industry=(
+            business.industry
+        ),
 
-        city=business.city,
-        county=business.county,
-        state=business.state,
+        city=(
+            business.city
+        ),
+
+        county=(
+            business.county
+        ),
+
+        state=(
+            business.state
+        ),
 
         asking_price=(
             business.asking_price
@@ -441,25 +533,46 @@ def build_business_match_input(
             )
         ),
 
-        arr=business.arr,
+        arr=(
+            business.arr
+        ),
 
         largest_customer_percent=float(
             business.customer_concentration
         ),
+
+        years_in_operation=(
+            business.years_in_operation
+        ),
     )
+
+
+# ============================================================
+# EXPLAINABILITY
+# ============================================================
 
 
 def build_score_breakdown(
     evaluation: MatchEvaluation,
 ) -> dict[str, Any]:
     """
-    Build a JSON-safe explainability payload for Match.score_breakdown.
+    Build JSON-safe explainability information for
+    Match.score_breakdown.
     """
 
-    dimensions: dict[str, Any] = {}
+    dimensions: dict[
+        str,
+        Any,
+    ] = {}
 
-    for name, dimension in evaluation.dimensions.items():
-        dimensions[name] = {
+    for (
+        name,
+        dimension,
+    ) in evaluation.dimensions.items():
+
+        dimensions[
+            name
+        ] = {
             "score": round(
                 dimension.score,
                 10,
@@ -475,16 +588,33 @@ def build_score_breakdown(
         }
 
     return {
-        "matching_version": MATCHING_VERSION,
-        "eligible": evaluation.eligible,
+        "matching_version": (
+            MATCHING_VERSION
+        ),
+        "eligible": (
+            evaluation.eligible
+        ),
         "failed_constraints": list(
             evaluation.failed_constraints
         ),
-        "score": evaluation.score,
-        "percentage": evaluation.percentage,
-        "meets_threshold": evaluation.meets_threshold,
-        "dimensions": dimensions,
+        "score": (
+            evaluation.score
+        ),
+        "percentage": (
+            evaluation.percentage
+        ),
+        "meets_threshold": (
+            evaluation.meets_threshold
+        ),
+        "dimensions": (
+            dimensions
+        ),
     }
+
+
+# ============================================================
+# MATCH LOOKUP
+# ============================================================
 
 
 def get_existing_match(
@@ -493,22 +623,33 @@ def get_existing_match(
     business_id: UUID,
 ) -> Match | None:
     """
-    Return the existing buyer-business Match if present.
+    Return an existing buyer/business Match.
 
-    The database has a unique buyer_id/business_id constraint,
-    therefore recalculation should update rather than duplicate.
+    A unique buyer/business pair should be updated rather
+    than duplicated during recalculation.
     """
 
-    statement = select(
-        Match
-    ).where(
-        Match.buyer_id == buyer_id,
-        Match.business_id == business_id,
+    statement = (
+        select(
+            Match
+        )
+        .where(
+            Match.buyer_id
+            == buyer_id,
+
+            Match.business_id
+            == business_id,
+        )
     )
 
     return session.scalar(
         statement
     )
+
+
+# ============================================================
+# MATCH PERSISTENCE
+# ============================================================
 
 
 def upsert_match(
@@ -520,21 +661,25 @@ def upsert_match(
     """
     Create or update one persisted Match.
 
-    The function does not commit the transaction.
-    Transaction ownership stays with the caller/service layer.
+    This method deliberately does NOT commit the transaction.
+    Transaction ownership stays with the caller.
     """
 
     if not evaluation.eligible:
         raise MatchingRepositoryError(
-            "Ineligible candidates must not be persisted as Match records."
+            "Ineligible candidates must not "
+            "be persisted as Match records."
         )
 
     if evaluation.score is None:
         raise MatchingRepositoryError(
-            "Eligible MatchEvaluation must contain a score."
+            "Eligible MatchEvaluation must "
+            "contain a score."
         )
 
-    dimensions = evaluation.dimensions
+    dimensions = (
+        evaluation.dimensions
+    )
 
     required_dimensions = {
         "industry",
@@ -557,7 +702,8 @@ def upsert_match(
 
     if missing_dimensions:
         raise MatchingRepositoryError(
-            "MatchEvaluation is missing dimensions: "
+            "MatchEvaluation is missing "
+            "dimensions: "
             + ", ".join(
                 sorted(
                     missing_dimensions
@@ -573,13 +719,21 @@ def upsert_match(
 
     if match is None:
         match = Match(
-            buyer_id=evaluation.buyer_id,
-            business_id=evaluation.business_id,
+            buyer_id=(
+                evaluation.buyer_id
+            ),
+            business_id=(
+                evaluation.business_id
+            ),
             score=_score_decimal(
                 evaluation.score
             ),
-            matching_version=matching_version,
-            status=MatchStatus.MATCHED,
+            matching_version=(
+                matching_version
+            ),
+            status=(
+                MatchStatus.MATCHED
+            ),
         )
 
         session.add(
@@ -587,7 +741,7 @@ def upsert_match(
         )
 
     # --------------------------------------------------------
-    # Final Score
+    # FINAL SCORE
     # --------------------------------------------------------
 
     match.score = _score_decimal(
@@ -595,7 +749,7 @@ def upsert_match(
     )
 
     # --------------------------------------------------------
-    # Individual Dimension Scores
+    # DIMENSION SCORES
     # --------------------------------------------------------
 
     match.industry_score = _score_decimal(
@@ -653,7 +807,7 @@ def upsert_match(
     )
 
     # --------------------------------------------------------
-    # Weighted Contributions
+    # WEIGHTED CONTRIBUTIONS
     # --------------------------------------------------------
 
     match.industry_contribution = _score_decimal(
@@ -711,14 +865,18 @@ def upsert_match(
     )
 
     # --------------------------------------------------------
-    # Explainability / Versioning
+    # VERSION + EXPLAINABILITY
     # --------------------------------------------------------
 
-    match.score_breakdown = build_score_breakdown(
-        evaluation
+    match.score_breakdown = (
+        build_score_breakdown(
+            evaluation
+        )
     )
 
-    match.matching_version = matching_version
+    match.matching_version = (
+        matching_version
+    )
 
     session.flush()
 

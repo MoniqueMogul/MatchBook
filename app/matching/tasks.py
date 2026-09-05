@@ -35,54 +35,76 @@ def _to_decimal(
     value: Any,
 ) -> Decimal:
     """
-    Safely convert serialized numeric values to Decimal.
+    Safely convert serialized numbers into Decimal.
     """
     return Decimal(
-        str(value)
+        str(
+            value
+        )
     )
+
+
+# ============================================================
+# TASK PAYLOAD BUILDERS
+# ============================================================
 
 
 def _build_buyer_input(
     payload: dict[str, Any],
 ) -> BuyerMatchInput:
     """
-    Convert JSON-safe task input into BuyerMatchInput.
+    Convert JSON-safe task data into BuyerMatchInput.
     """
+
     return BuyerMatchInput(
         buyer_id=int(
-            payload["buyer_id"]
+            payload[
+                "buyer_id"
+            ]
         ),
 
-        target_industries=payload.get(
-            "target_industries"
+        target_industries=(
+            payload.get(
+                "target_industries"
+            )
         ),
 
-        target_locations=payload.get(
-            "target_locations"
+        target_locations=(
+            payload.get(
+                "target_locations"
+            )
         ),
 
         maximum_purchase_price=(
             _to_decimal(
-                payload["maximum_purchase_price"]
+                payload[
+                    "maximum_purchase_price"
+                ]
             )
             if payload.get(
                 "maximum_purchase_price"
-            ) is not None
+            )
+            is not None
             else None
         ),
 
         minimum_sde=(
             _to_decimal(
-                payload["minimum_sde"]
+                payload[
+                    "minimum_sde"
+                ]
             )
             if payload.get(
                 "minimum_sde"
-            ) is not None
+            )
+            is not None
             else None
         ),
 
         preferred_sde=_to_decimal(
-            payload["preferred_sde"]
+            payload[
+                "preferred_sde"
+            ]
         ),
 
         preferred_owner_hours=float(
@@ -104,17 +126,34 @@ def _build_buyer_input(
         ),
 
         minimum_arr=_to_decimal(
-            payload["minimum_arr"]
+            payload[
+                "minimum_arr"
+            ]
         ),
 
         preferred_arr=_to_decimal(
-            payload["preferred_arr"]
+            payload[
+                "preferred_arr"
+            ]
         ),
 
         accepts_customer_concentration_above_25_percent=bool(
             payload[
                 "accepts_customer_concentration_above_25_percent"
             ]
+        ),
+
+        minimum_years_in_operation=(
+            int(
+                payload[
+                    "minimum_years_in_operation"
+                ]
+            )
+            if payload.get(
+                "minimum_years_in_operation"
+            )
+            is not None
+            else None
         ),
     )
 
@@ -123,46 +162,63 @@ def _build_business_input(
     payload: dict[str, Any],
 ) -> BusinessMatchInput:
     """
-    Convert JSON-safe task input into BusinessMatchInput.
+    Convert JSON-safe task data into BusinessMatchInput.
     """
+
     return BusinessMatchInput(
         business_id=int(
-            payload["business_id"]
+            payload[
+                "business_id"
+            ]
         ),
 
-        industry=payload.get(
-            "industry"
+        industry=(
+            payload.get(
+                "industry"
+            )
         ),
 
-        city=payload.get(
-            "city"
+        city=(
+            payload.get(
+                "city"
+            )
         ),
 
-        county=payload.get(
-            "county"
+        county=(
+            payload.get(
+                "county"
+            )
         ),
 
-        state=payload.get(
-            "state"
+        state=(
+            payload.get(
+                "state"
+            )
         ),
 
         asking_price=(
             _to_decimal(
-                payload["asking_price"]
+                payload[
+                    "asking_price"
+                ]
             )
             if payload.get(
                 "asking_price"
-            ) is not None
+            )
+            is not None
             else None
         ),
 
         sde=(
             _to_decimal(
-                payload["sde"]
+                payload[
+                    "sde"
+                ]
             )
             if payload.get(
                 "sde"
-            ) is not None
+            )
+            is not None
             else None
         ),
 
@@ -185,7 +241,9 @@ def _build_business_input(
         ),
 
         arr=_to_decimal(
-            payload["arr"]
+            payload[
+                "arr"
+            ]
         ),
 
         largest_customer_percent=float(
@@ -193,12 +251,33 @@ def _build_business_input(
                 "largest_customer_percent"
             ]
         ),
+
+        years_in_operation=(
+            int(
+                payload[
+                    "years_in_operation"
+                ]
+            )
+            if payload.get(
+                "years_in_operation"
+            )
+            is not None
+            else None
+        ),
     )
+
+
+# ============================================================
+# CELERY MATCHING TASK
+# ============================================================
 
 
 @celery_app.task(
     bind=True,
-    name="app.matching.tasks.rank_matches_task",
+    name=(
+        "app.matching.tasks."
+        "rank_matches_task"
+    ),
     autoretry_for=(
         TimeoutError,
         ConnectionError,
@@ -210,21 +289,41 @@ def _build_business_input(
 )
 def rank_matches_task(
     self,
-    buyer_payload: dict[str, Any],
-    business_payloads: list[dict[str, Any]],
-    minimum_threshold: float = DEFAULT_MIN_FIT_THRESHOLD,
-    top_n: int = DEFAULT_TOP_N_MATCHES,
-) -> list[dict[str, Any]]:
+    buyer_payload: dict[
+        str,
+        Any,
+    ],
+    business_payloads: list[
+        dict[
+            str,
+            Any,
+        ]
+    ],
+    minimum_threshold: float = (
+        DEFAULT_MIN_FIT_THRESHOLD
+    ),
+    top_n: int = (
+        DEFAULT_TOP_N_MATCHES
+    ),
+) -> list[
+    dict[
+        str,
+        Any,
+    ]
+]:
     """
     Asynchronously evaluate and rank businesses for one buyer.
 
-    Current V1 integration boundary:
-        serialized buyer/business data -> Matching Engine
+    Current integration boundary:
+        JSON-safe buyer/business payloads
+        -> Matching Engine
 
-    Once the shared MatchBook repository/database layer is
-    finalized, this task can be changed to receive IDs and load
-    records from PostgreSQL rather than sending full records
-    through RabbitMQ.
+    Future production boundary:
+        buyer_id/event
+        -> PostgreSQL repository
+        -> Matching Engine
+        -> persisted Match records
+        -> Redis cache
     """
 
     buyer = _build_buyer_input(
@@ -235,27 +334,36 @@ def rank_matches_task(
         _build_business_input(
             payload
         )
-        for payload in business_payloads
+        for payload
+        in business_payloads
     ]
 
     ranked = rank_candidates(
         buyer,
         businesses,
-        minimum_threshold=minimum_threshold,
-        top_n=top_n,
+        minimum_threshold=(
+            minimum_threshold
+        ),
+        top_n=(
+            top_n
+        ),
     )
 
     results = [
         asdict(
             ranked_match
         )
-        for ranked_match in ranked
+        for ranked_match
+        in ranked
     ]
 
-    # Redis is a cache, not the source of truth.
-    # A cache failure should not destroy a valid matching job.
+    # Redis is only a cache.
+    # A Redis outage must not invalidate
+    # a successful Matching Engine result.
     try:
-        cache = get_match_cache()
+        cache = (
+            get_match_cache()
+        )
 
         cache.set_ranked_matches(
             buyer.buyer_id,
@@ -264,7 +372,8 @@ def rank_matches_task(
 
     except RedisError:
         logger.warning(
-            "Unable to cache matching results for buyer_id=%s",
+            "Unable to cache matching results "
+            "for buyer_id=%s",
             buyer.buyer_id,
             exc_info=True,
         )
