@@ -1,13 +1,31 @@
 from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+)
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
 
 from app.matching.config import (
     DEFAULT_MIN_FIT_THRESHOLD,
     DEFAULT_TOP_N_MATCHES,
+)
+
+from app.matching.db_service import (
+    MatchingDatabaseServiceError,
+    recalculate_matches_for_buyer,
+)
+
+from app.matching.repository import (
+    MatchingDataIncompleteError,
 )
 
 from app.matching.schemas import (
@@ -34,7 +52,7 @@ router = APIRouter(
 
 class BuyerMatchRequest(BaseModel):
     """
-    Buyer matching preferences supplied through the API.
+    Buyer matching preferences supplied directly through the API.
     """
 
     buyer_id: int
@@ -77,7 +95,7 @@ class BuyerMatchRequest(BaseModel):
 
 class BusinessMatchRequest(BaseModel):
     """
-    Seller/business data supplied to the Matching Engine.
+    Seller/business data supplied directly to the Matching Engine.
     """
 
     business_id: int
@@ -85,7 +103,9 @@ class BusinessMatchRequest(BaseModel):
     industry: str | None = None
 
     city: str | None = None
+
     county: str | None = None
+
     state: str | None = None
 
     asking_price: Decimal | None = Field(
@@ -124,11 +144,21 @@ class BusinessMatchRequest(BaseModel):
 
 
 class EvaluateMatchRequest(BaseModel):
+    """
+    Request body for evaluating one buyer/business pair.
+    """
+
     buyer: BuyerMatchRequest
+
     business: BusinessMatchRequest
 
 
 class RankMatchesRequest(BaseModel):
+    """
+    Request body for ranking multiple businesses
+    against one buyer.
+    """
+
     buyer: BuyerMatchRequest
 
     businesses: list[
@@ -145,16 +175,19 @@ def _build_buyer(
     request: BuyerMatchRequest,
 ) -> BuyerMatchInput:
     """
-    Convert the API request model into the pure Matching Engine
-    input dataclass.
+    Convert API buyer input into the pure Matching Engine
+    BuyerMatchInput dataclass.
     """
+
+    minimum_sde = (
+        request.minimum_sde
+        if request.minimum_sde is not None
+        else Decimal("0")
+    )
 
     if (
         request.preferred_sde
-        < (
-            request.minimum_sde
-            or Decimal("0")
-        )
+        < minimum_sde
     ):
         raise ValueError(
             "preferred_sde cannot be below minimum_sde"
@@ -169,7 +202,9 @@ def _build_buyer(
         )
 
     return BuyerMatchInput(
-        buyer_id=request.buyer_id,
+        buyer_id=(
+            request.buyer_id
+        ),
 
         target_industries=(
             request.target_industries
@@ -225,7 +260,8 @@ def _build_business(
     request: BusinessMatchRequest,
 ) -> BusinessMatchInput:
     """
-    Convert API business data into the pure Matching Engine input.
+    Convert API business input into the pure Matching Engine
+    BusinessMatchInput dataclass.
     """
 
     return BusinessMatchInput(
@@ -284,7 +320,7 @@ def _build_business(
 
 
 # ============================================================
-# HEALTH / METADATA
+# HEALTH
 # ============================================================
 
 
@@ -293,7 +329,7 @@ def _build_business(
 )
 def matching_health() -> dict[str, str]:
     """
-    Lightweight Matching Engine health endpoint.
+    Lightweight health check for the Matching Engine.
     """
 
     return {
@@ -312,6 +348,7 @@ def matching_health() -> dict[str, str]:
 )
 def evaluate_match(
     request: EvaluateMatchRequest,
+
     minimum_threshold: float = Query(
         default=DEFAULT_MIN_FIT_THRESHOLD,
         ge=0.0,
@@ -321,7 +358,17 @@ def evaluate_match(
     """
     Evaluate one buyer/business pair.
 
-    Hard eligibility is applied before deterministic scoring.
+    Flow:
+
+        API Request
+            ↓
+        Hard Eligibility
+            ↓
+        Deterministic FIT Scoring
+            ↓
+        Threshold Evaluation
+            ↓
+        Explainable Result
     """
 
     try:
@@ -364,11 +411,13 @@ def evaluate_match(
 )
 def rank_matches(
     request: RankMatchesRequest,
+
     minimum_threshold: float = Query(
         default=DEFAULT_MIN_FIT_THRESHOLD,
         ge=0.0,
         le=1.0,
     ),
+
     top_n: int = Query(
         default=DEFAULT_TOP_N_MATCHES,
         ge=1,
@@ -378,11 +427,12 @@ def rank_matches(
     """
     Evaluate and rank candidate businesses for one buyer.
 
-    Only candidates that:
-        - pass hard eligibility
-        - meet the configured FIT threshold
+    Only businesses that:
 
-    are returned.
+        1. Pass hard eligibility.
+        2. Meet the configured FIT threshold.
+
+    are included in the returned ranked list.
     """
 
     try:
@@ -413,14 +463,16 @@ def rank_matches(
             "buyer_id": (
                 buyer.buyer_id
             ),
+
             "count": len(
                 ranked
             ),
+
             "matches": [
                 asdict(
-                    result
+                    ranked_match
                 )
-                for result
+                for ranked_match
                 in ranked
             ],
         }
@@ -430,5 +482,120 @@ def rank_matches(
             status_code=422,
             detail=str(
                 exc
+            ),
+        ) from exc
+
+
+# ============================================================
+# DATABASE-BACKED MATCH RECALCULATION
+# ============================================================
+
+
+@router.post(
+    "/recalculate/{buyer_id}",
+)
+def recalculate_matches(
+    buyer_id: UUID,
+
+    minimum_threshold: float = Query(
+        default=DEFAULT_MIN_FIT_THRESHOLD,
+        ge=0.0,
+        le=1.0,
+    ),
+
+    top_n: int = Query(
+        default=DEFAULT_TOP_N_MATCHES,
+        ge=1,
+        le=100,
+    ),
+
+    session: Session = Depends(
+        get_db
+    ),
+) -> dict[str, Any]:
+    """
+    Recalculate matches for one buyer using the MatchBook
+    database as the source of truth.
+
+    Production workflow:
+
+        buyer_id
+            ↓
+        PostgreSQL / Supabase
+            ↓
+        BuyerPreferences
+            ↓
+        Candidate Businesses
+            ↓
+        Hard Eligibility Filters
+            ↓
+        Deterministic FIT Scoring
+            ↓
+        Threshold Filtering
+            ↓
+        Top-N Ranking
+            ↓
+        Match Persistence
+            ↓
+        API Response
+
+    The database-backed service owns the transaction and
+    persists eligible Match records.
+    """
+
+    try:
+        ranked = (
+            recalculate_matches_for_buyer(
+                session,
+                buyer_id,
+                minimum_threshold=(
+                    minimum_threshold
+                ),
+                top_n=(
+                    top_n
+                ),
+            )
+        )
+
+        return {
+            "buyer_id": str(
+                buyer_id
+            ),
+
+            "count": len(
+                ranked
+            ),
+
+            "matches": [
+                asdict(
+                    ranked_match
+                )
+                for ranked_match
+                in ranked
+            ],
+        }
+
+    except MatchingDataIncompleteError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(
+                exc
+            ),
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(
+                exc
+            ),
+        ) from exc
+
+    except MatchingDatabaseServiceError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to recalculate matches "
+                "at this time."
             ),
         ) from exc
