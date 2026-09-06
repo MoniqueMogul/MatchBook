@@ -20,9 +20,16 @@ __pycache__/
 
 # Testing
 .pytest_cache/
+.coverage
+htmlcov/
 
 # Type checking
 .mypy_cache/
+
+# Build / distribution
+*.egg-info/
+dist/
+build/
 
 # OS files
 .DS_Store
