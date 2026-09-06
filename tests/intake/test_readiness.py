@@ -22,7 +22,7 @@ def test_complete_buyer_preferences_are_matching_ready() -> None:
         required_transition_training_days=30,
         deal_preference="financing",
         accepts_customer_concentration_above_25_percent=False,
-        preferred_sale_timeline="3-6 months",
+        preferred_acquisition_timeline="3-6 months",
     )
 
     result = buyer_preferences_readiness(preferences)
@@ -65,7 +65,7 @@ def test_false_customer_concentration_preference_counts_as_answered() -> None:
         required_transition_training_days=30,
         deal_preference="financing",
         accepts_customer_concentration_above_25_percent=False,
-        preferred_sale_timeline="3-6 months",
+        preferred_acquisition_timeline="3-6 months",
     )
 
     result = buyer_preferences_readiness(preferences)
@@ -101,7 +101,7 @@ def test_new_matching_dimensions_are_required_for_buyer_readiness() -> None:
     )
 
     assert (
-        "preferred_sale_timeline"
+        "preferred_acquisition_timeline"
         in result.missing_fields
     )
 
