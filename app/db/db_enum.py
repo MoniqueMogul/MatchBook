@@ -79,3 +79,44 @@ class DocumentType(str, Enum):
 class StorageProvider(str, Enum):
     CLOUDFLARE_R2 = "cloudflare_r2"
 
+
+class LenderApprovedStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+
+
+class NDAStatus(str, Enum):
+    PENDING = "pending"
+    BUYER_SIGNED = "buyer_signed"
+    SELLER_SIGNED = "seller_signed"
+    COMPLETED = "completed"
+
+
+class NotificationType(str, Enum):
+    NEW_MATCH = "new_match"
+    MATCH_STATUS_CHANGED = "match_status_changed"
+    NEW_MESSAGE = "new_message"
+    NDA_SIGNED = "nda_signed"
+    NDA_COMPLETED = "nda_completed"
+    VERIFICATION_COMPLETED = "verification_completed"
+    DOCUMENT_UPLOADED = "document_uploaded"
+    DUE_DILIGENCE_UPDATE = "due_diligence_update"
+
+
+
+class EventType(str, Enum):
+    USER_CREATED = "user_created"
+    BUYER_CREATED = "buyer_created"
+    SELLER_CREATED = "seller_created"
+    BUSINESS_CREATED = "business_created"
+    BUYER_PREFERENCES_UPDATED = "buyer_preferences_updated"
+    BUYER_FINANCIALS_UPDATED = "buyer_financials_updated"
+    BUSINESS_UPDATED = "business_updated"
+    MATCH_CREATED = "match_created"
+    MATCH_STATUS_CHANGED = "match_status_changed"
+    VERIFICATION_COMPLETED = "verification_completed"
+    NDA_COMPLETED = "nda_completed"
+    DOCUMENT_UPLOADED = "document_uploaded"
+    MESSAGE_CREATED = "message_created"
