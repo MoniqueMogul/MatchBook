@@ -959,7 +959,7 @@ class Business(Base):
 
         UniqueConstraint(
             "seller_id",
-            "idempotency_key",
+            "idepotency_key",
             name="uq_business_seller_idempotency_key",
         ),
 
@@ -1319,6 +1319,21 @@ class Document(Base):
     )
 
     verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    # --------------------------------------------------------
+    # Authenticity declaration
+    # --------------------------------------------------------
+
+    declaration_signed: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+    )
+
+    declaration_signed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

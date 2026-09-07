@@ -12,6 +12,12 @@ class VerificationStatus(str, Enum):
     PENDING = "pending"
     VERIFIED = "verified"
     REJECTED = "rejected"
+    UPLOADING = "uploading"
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    REQUIRES_REVIEW = "requires_review"
+    FAILED = "failed"
+    EXPIRED = "expired"
 
 
 class BuyerType(str, Enum):
@@ -120,3 +126,5 @@ class EventType(str, Enum):
     NDA_COMPLETED = "nda_completed"
     DOCUMENT_UPLOADED = "document_uploaded"
     MESSAGE_CREATED = "message_created"
+    DISCREPANCY_FLAGGED = "discrepancy_flagged"
+    VERIFICATION_REVIEW_REQUIRED = "verification_review_required"
