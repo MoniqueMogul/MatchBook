@@ -757,6 +757,11 @@ class Business(Base):
         index=True,
     )
 
+    idepotency_key: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
     # --------------------------------------------------------
     # Identity
     # --------------------------------------------------------
@@ -950,6 +955,12 @@ class Business(Base):
         CheckConstraint(
             "arr IS NULL OR arr >= 0",
             name="ck_business_arr_nonnegative",
+        ),
+
+        UniqueConstraint(
+            "seller_id",
+            "idempotency_key",
+            name="uq_business_seller_idempotency_key",
         ),
 
         CheckConstraint(
