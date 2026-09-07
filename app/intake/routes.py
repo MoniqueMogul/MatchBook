@@ -4,10 +4,14 @@ from uuid import UUID
 from fastapi import (
     APIRouter,
     Depends,
+    Header,
     HTTPException,
     status,
 )
 
+from app.auth.dependencies import (
+    get_current_user_id,
+)
 from app.intake.dependencies import (
     get_intake_repository,
 )
@@ -80,10 +84,22 @@ def _raise_http_error(
     ) from exc
 
 
-# TODO:
-# Once the team provides the shared Supabase Auth
-# dependency, replace user_id path parameters with
-# the authenticated user's UUID.
+def _clean_idempotency_key(
+    idempotency_key: str,
+) -> str:
+
+    cleaned = idempotency_key.strip()
+
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Idempotency-Key header "
+                "cannot be blank."
+            ),
+        )
+
+    return cleaned
 
 
 # ============================================================
@@ -92,13 +108,15 @@ def _raise_http_error(
 
 
 @router.post(
-    "/buyers/{user_id}/profile",
+    "/buyers/profile",
     response_model=BuyerProfileRead,
     status_code=status.HTTP_201_CREATED,
 )
 def create_buyer_profile(
-    user_id: UUID,
     payload: BuyerProfileCreate,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -107,7 +125,7 @@ def create_buyer_profile(
     try:
         profile = (
             repository.create_buyer_profile(
-                user_id,
+                current_user_id,
                 payload,
             )
         )
@@ -123,11 +141,13 @@ def create_buyer_profile(
 
 
 @router.get(
-    "/buyers/{user_id}/profile",
+    "/buyers/profile",
     response_model=BuyerProfileRead,
 )
 def get_buyer_profile(
-    user_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -135,7 +155,7 @@ def get_buyer_profile(
 
     profile = (
         repository.get_buyer_profile_by_user_id(
-            user_id
+            current_user_id
         )
     )
 
@@ -154,12 +174,14 @@ def get_buyer_profile(
 
 
 @router.patch(
-    "/buyers/{user_id}/profile",
+    "/buyers/profile",
     response_model=BuyerProfileRead,
 )
 def update_buyer_profile(
-    user_id: UUID,
     payload: BuyerProfileUpdate,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -168,7 +190,7 @@ def update_buyer_profile(
     try:
         profile = (
             repository.update_buyer_profile(
-                user_id,
+                current_user_id,
                 payload,
             )
         )
@@ -189,11 +211,13 @@ def update_buyer_profile(
 
 
 @router.get(
-    "/buyers/{user_id}/preferences",
+    "/buyers/preferences",
     response_model=BuyerPreferencesRead,
 )
 def get_buyer_preferences(
-    user_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -201,7 +225,7 @@ def get_buyer_preferences(
 
     preferences = (
         repository.get_buyer_preferences_by_user_id(
-            user_id
+            current_user_id
         )
     )
 
@@ -220,12 +244,14 @@ def get_buyer_preferences(
 
 
 @router.put(
-    "/buyers/{user_id}/preferences",
+    "/buyers/preferences",
     response_model=BuyerPreferencesRead,
 )
 def upsert_buyer_preferences(
-    user_id: UUID,
     payload: BuyerPreferencesUpsert,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -234,7 +260,7 @@ def upsert_buyer_preferences(
     try:
         preferences = (
             repository.upsert_buyer_preferences(
-                user_id,
+                current_user_id,
                 payload,
             )
         )
@@ -250,11 +276,13 @@ def upsert_buyer_preferences(
 
 
 @router.get(
-    "/buyers/{user_id}/readiness",
+    "/buyers/readiness",
     response_model=ReadinessResponse,
 )
 def get_buyer_readiness(
-    user_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -262,7 +290,7 @@ def get_buyer_readiness(
 
     preferences = (
         repository.get_buyer_preferences_by_user_id(
-            user_id
+            current_user_id
         )
     )
 
@@ -297,13 +325,15 @@ def get_buyer_readiness(
 
 
 @router.post(
-    "/sellers/{user_id}/profile",
+    "/sellers/profile",
     response_model=SellerProfileRead,
     status_code=status.HTTP_201_CREATED,
 )
 def create_seller_profile(
-    user_id: UUID,
     payload: SellerProfileCreate,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -312,7 +342,7 @@ def create_seller_profile(
     try:
         profile = (
             repository.create_seller_profile(
-                user_id,
+                current_user_id,
                 payload,
             )
         )
@@ -328,11 +358,13 @@ def create_seller_profile(
 
 
 @router.get(
-    "/sellers/{user_id}/profile",
+    "/sellers/profile",
     response_model=SellerProfileRead,
 )
 def get_seller_profile(
-    user_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -340,7 +372,7 @@ def get_seller_profile(
 
     profile = (
         repository.get_seller_profile_by_user_id(
-            user_id
+            current_user_id
         )
     )
 
@@ -364,23 +396,36 @@ def get_seller_profile(
 
 
 @router.post(
-    "/sellers/{user_id}/businesses",
+    "/sellers/businesses",
     response_model=BusinessRead,
     status_code=status.HTTP_201_CREATED,
 )
 def create_business(
-    user_id: UUID,
     payload: BusinessCreate,
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=255,
+    ),
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
 ) -> BusinessRead:
 
+    cleaned_key = _clean_idempotency_key(
+        idempotency_key
+    )
+
     try:
         business = (
             repository.create_business(
-                user_id,
+                current_user_id,
                 payload,
+                cleaned_key,
             )
         )
 
@@ -395,11 +440,13 @@ def create_business(
 
 
 @router.get(
-    "/sellers/{user_id}/businesses",
+    "/sellers/businesses",
     response_model=list[BusinessRead],
 )
 def list_businesses(
-    user_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -408,7 +455,7 @@ def list_businesses(
     try:
         businesses = (
             repository.list_businesses_for_seller(
-                user_id
+                current_user_id
             )
         )
 
@@ -426,12 +473,14 @@ def list_businesses(
 
 
 @router.get(
-    "/sellers/{user_id}/businesses/{business_id}",
+    "/sellers/businesses/{business_id}",
     response_model=BusinessRead,
 )
 def get_business(
-    user_id: UUID,
     business_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -439,7 +488,7 @@ def get_business(
 
     business = (
         repository.get_business_for_seller(
-            user_id,
+            current_user_id,
             business_id,
         )
     )
@@ -459,13 +508,15 @@ def get_business(
 
 
 @router.patch(
-    "/sellers/{user_id}/businesses/{business_id}",
+    "/sellers/businesses/{business_id}",
     response_model=BusinessRead,
 )
 def update_business(
-    user_id: UUID,
     business_id: UUID,
     payload: BusinessUpdate,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -474,7 +525,7 @@ def update_business(
     try:
         business = (
             repository.update_business(
-                user_id,
+                current_user_id,
                 business_id,
                 payload,
             )
@@ -491,15 +542,14 @@ def update_business(
 
 
 @router.get(
-    (
-        "/sellers/{user_id}/businesses/"
-        "{business_id}/readiness"
-    ),
+    "/sellers/businesses/{business_id}/readiness",
     response_model=ReadinessResponse,
 )
 def get_business_readiness(
-    user_id: UUID,
     business_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
@@ -507,7 +557,7 @@ def get_business_readiness(
 
     business = (
         repository.get_business_for_seller(
-            user_id,
+            current_user_id,
             business_id,
         )
     )

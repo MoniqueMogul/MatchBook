@@ -1,10 +1,40 @@
-from types import SimpleNamespace
+import sys
+from datetime import datetime, timezone
+from types import (
+    ModuleType,
+    SimpleNamespace,
+)
 from unittest.mock import MagicMock
 from uuid import uuid4
+
+
+# ------------------------------------------------------------
+# Stub the shared Supabase client before importing
+# app.auth.dependencies.
+#
+# Intake route tests verify that the routes depend on
+# get_current_user_id. Tim's auth implementation itself
+# should be tested separately by the auth module.
+# ------------------------------------------------------------
+
+fake_auth_module = ModuleType(
+    "app.auth.auth"
+)
+
+fake_auth_module.supabase = MagicMock()
+
+sys.modules.setdefault(
+    "app.auth.auth",
+    fake_auth_module,
+)
+
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.auth.dependencies import (
+    get_current_user_id,
+)
 from app.intake.dependencies import (
     get_intake_repository,
 )
@@ -16,7 +46,12 @@ from app.intake.routes import router
 
 def build_client(
     repository: object,
-) -> TestClient:
+    user_id=None,
+) -> tuple[TestClient, object]:
+
+    authenticated_user_id = (
+        user_id or uuid4()
+    )
 
     app = FastAPI()
 
@@ -28,8 +63,13 @@ def build_client(
         get_intake_repository
     ] = lambda: repository
 
-    return TestClient(
-        app
+    app.dependency_overrides[
+        get_current_user_id
+    ] = lambda: authenticated_user_id
+
+    return (
+        TestClient(app),
+        authenticated_user_id,
     )
 
 
@@ -39,15 +79,12 @@ def test_missing_buyer_profile_returns_404() -> None:
 
     repository.get_buyer_profile_by_user_id.return_value = None
 
-    client = build_client(
+    client, user_id = build_client(
         repository
     )
 
     response = client.get(
-        (
-            f"/intake/buyers/"
-            f"{uuid4()}/profile"
-        )
+        "/intake/buyers/profile"
     )
 
     assert (
@@ -63,6 +100,10 @@ def test_missing_buyer_profile_returns_404() -> None:
         )
     )
 
+    repository.get_buyer_profile_by_user_id.assert_called_once_with(
+        user_id
+    )
+
 
 def test_duplicate_buyer_profile_returns_409() -> None:
 
@@ -75,15 +116,12 @@ def test_duplicate_buyer_profile_returns_409() -> None:
         )
     )
 
-    client = build_client(
+    client, user_id = build_client(
         repository
     )
 
     response = client.post(
-        (
-            f"/intake/buyers/"
-            f"{uuid4()}/profile"
-        ),
+        "/intake/buyers/profile",
         json={
             "buyer_type": (
                 "first_time_owner"
@@ -102,6 +140,17 @@ def test_duplicate_buyer_profile_returns_409() -> None:
             "Buyer profile already exists "
             "for this user."
         )
+    )
+
+    call = (
+        repository
+        .create_buyer_profile
+        .call_args
+    )
+
+    assert (
+        call.args[0]
+        == user_id
     )
 
 
@@ -134,15 +183,12 @@ def test_buyer_readiness_returns_missing_fields() -> None:
         )
     )
 
-    client = build_client(
+    client, user_id = build_client(
         repository
     )
 
     response = client.get(
-        (
-            f"/intake/buyers/"
-            f"{uuid4()}/readiness"
-        )
+        "/intake/buyers/readiness"
     )
 
     assert (
@@ -157,3 +203,115 @@ def test_buyer_readiness_returns_missing_fields() -> None:
             "preferred_arr",
         ],
     }
+
+    repository.get_buyer_preferences_by_user_id.assert_called_once_with(
+        user_id
+    )
+
+
+def test_create_business_uses_auth_user_and_idempotency_key() -> None:
+
+    repository = MagicMock()
+
+    seller_id = uuid4()
+    business_id = uuid4()
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    repository.create_business.return_value = (
+        SimpleNamespace(
+            id=business_id,
+            seller_id=seller_id,
+            legal_name=None,
+            dba=None,
+            business_type="Service",
+            industry="HVAC",
+            city="Austin",
+            county=None,
+            state="Texas",
+            zip_code=None,
+            years_in_operation=None,
+            number_of_locations=None,
+            number_of_routes=None,
+            arr=None,
+            customer_concentration=None,
+            asking_price=None,
+            sde=None,
+            owner_involvement_hours_per_week=None,
+            transition_training_days=None,
+            deal_preference=None,
+            preferred_sale_timeline=None,
+            verification_status="unverified",
+            status="draft",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    client, user_id = build_client(
+        repository
+    )
+
+    response = client.post(
+        "/intake/sellers/businesses",
+        headers={
+            "Idempotency-Key": (
+                "business-request-123"
+            ),
+        },
+        json={
+            "business_type": "Service",
+            "industry": "HVAC",
+            "city": "Austin",
+            "state": "Texas",
+        },
+    )
+
+    assert (
+        response.status_code
+        == 201
+    )
+
+    call = (
+        repository
+        .create_business
+        .call_args
+    )
+
+    assert (
+        call.args[0]
+        == user_id
+    )
+
+    assert (
+        call.args[2]
+        == "business-request-123"
+    )
+
+
+def test_create_business_requires_idempotency_key() -> None:
+
+    repository = MagicMock()
+
+    client, _ = build_client(
+        repository
+    )
+
+    response = client.post(
+        "/intake/sellers/businesses",
+        json={
+            "business_type": "Service",
+            "industry": "HVAC",
+            "city": "Austin",
+            "state": "Texas",
+        },
+    )
+
+    assert (
+        response.status_code
+        == 422
+    )
+
+    repository.create_business.assert_not_called()

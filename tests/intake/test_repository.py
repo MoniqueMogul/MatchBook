@@ -2,17 +2,20 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.db_model import (
     Business,
     BuyerProfile,
+    SellerProfile,
     User,
 )
 from app.intake.repository import (
     IntakeRepository,
 )
 from app.intake.schemas.business import (
+    BusinessCreate,
     BusinessUpdate,
 )
 from app.intake.schemas.buyer import (
@@ -136,6 +139,187 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
     )
 
 
+def test_create_business_persists_idempotency_key() -> None:
+
+    seller_user_id = uuid4()
+    seller_id = uuid4()
+
+    seller = SellerProfile(
+        id=seller_id,
+        user_id=seller_user_id,
+    )
+
+    session = MagicMock(
+        spec=Session
+    )
+
+    session.scalar.side_effect = [
+        seller,
+        None,
+    ]
+
+    repository = IntakeRepository(
+        session
+    )
+
+    created = repository.create_business(
+        seller_user_id,
+        BusinessCreate(
+            business_type="Service",
+            industry="HVAC",
+            city="Austin",
+            state="Texas",
+        ),
+        "create-business-123",
+    )
+
+    added = (
+        session.add.call_args.args[0]
+    )
+
+    assert created is added
+
+    assert isinstance(
+        added,
+        Business,
+    )
+
+    assert (
+        added.seller_id
+        == seller_id
+    )
+
+    assert (
+        added.idempotency_key
+        == "create-business-123"
+    )
+
+    assert (
+        added.industry
+        == "HVAC"
+    )
+
+    session.commit.assert_called_once()
+
+    session.refresh.assert_called_once_with(
+        added
+    )
+
+
+def test_create_business_reuses_existing_idempotent_result() -> None:
+
+    seller_user_id = uuid4()
+    seller_id = uuid4()
+
+    seller = SellerProfile(
+        id=seller_id,
+        user_id=seller_user_id,
+    )
+
+    existing = Business(
+        id=uuid4(),
+        seller_id=seller_id,
+        idempotency_key="same-request",
+        business_type="Service",
+        industry="HVAC",
+        city="Austin",
+        state="Texas",
+    )
+
+    session = MagicMock(
+        spec=Session
+    )
+
+    session.scalar.side_effect = [
+        seller,
+        existing,
+    ]
+
+    repository = IntakeRepository(
+        session
+    )
+
+    result = repository.create_business(
+        seller_user_id,
+        BusinessCreate(
+            business_type="Service",
+            industry="HVAC",
+            city="Austin",
+            state="Texas",
+        ),
+        "same-request",
+    )
+
+    assert result is existing
+
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+    session.refresh.assert_not_called()
+
+
+def test_create_business_recovers_from_idempotency_race() -> None:
+
+    seller_user_id = uuid4()
+    seller_id = uuid4()
+
+    seller = SellerProfile(
+        id=seller_id,
+        user_id=seller_user_id,
+    )
+
+    existing = Business(
+        id=uuid4(),
+        seller_id=seller_id,
+        idempotency_key="racing-request",
+        business_type="Service",
+        industry="HVAC",
+        city="Austin",
+        state="Texas",
+    )
+
+    session = MagicMock(
+        spec=Session
+    )
+
+    # 1. seller lookup
+    # 2. no idempotent business yet
+    # 3. after failed INSERT, another request's
+    #    business is now visible
+    session.scalar.side_effect = [
+        seller,
+        None,
+        existing,
+    ]
+
+    session.commit.side_effect = (
+        IntegrityError(
+            "INSERT",
+            {},
+            Exception("duplicate"),
+        )
+    )
+
+    repository = IntakeRepository(
+        session
+    )
+
+    result = repository.create_business(
+        seller_user_id,
+        BusinessCreate(
+            business_type="Service",
+            industry="HVAC",
+            city="Austin",
+            state="Texas",
+        ),
+        "racing-request",
+    )
+
+    assert result is existing
+
+    session.rollback.assert_called_once()
+    session.refresh.assert_not_called()
+
+
 def test_update_business_changes_only_supplied_fields() -> None:
 
     seller_user_id = uuid4()
@@ -144,6 +328,7 @@ def test_update_business_changes_only_supplied_fields() -> None:
     business = Business(
         id=business_id,
         seller_id=uuid4(),
+        idempotency_key="update-business",
         business_type="Service",
         industry="HVAC",
         city="Austin",

@@ -324,10 +324,25 @@ class IntakeRepository:
             ).all()
         )
 
+    def _get_business_by_idempotency_key(
+        self,
+        seller_id: UUID,
+        idempotency_key: str,
+    ) -> Business | None:
+
+        return self.session.scalar(
+            select(Business).where(
+                Business.seller_id == seller_id,
+                Business.idempotency_key
+                == idempotency_key,
+            )
+        )
+
     def create_business(
         self,
         seller_user_id: UUID,
         data: BusinessCreate,
+        idempotency_key: str,
     ) -> Business:
 
         seller = (
@@ -342,8 +357,19 @@ class IntakeRepository:
                 "creating a business."
             )
 
+        existing = (
+            self._get_business_by_idempotency_key(
+                seller.id,
+                idempotency_key,
+            )
+        )
+
+        if existing is not None:
+            return existing
+
         business = Business(
             seller_id=seller.id,
+            idempotency_key=idempotency_key,
             **data.model_dump(),
         )
 
@@ -351,7 +377,31 @@ class IntakeRepository:
             business
         )
 
-        self._commit_and_refresh(
+        try:
+            self.session.commit()
+
+        except IntegrityError as exc:
+            self.session.rollback()
+
+            # Another identical request may have
+            # created the row between our initial
+            # SELECT and COMMIT.
+            existing = (
+                self._get_business_by_idempotency_key(
+                    seller.id,
+                    idempotency_key,
+                )
+            )
+
+            if existing is not None:
+                return existing
+
+            raise IntakeConflictError(
+                "Database constraints prevented "
+                "the business from being created."
+            ) from exc
+
+        self.session.refresh(
             business
         )
 
