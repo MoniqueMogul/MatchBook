@@ -120,3 +120,8 @@ class EventType(str, Enum):
     NDA_COMPLETED = "nda_completed"
     DOCUMENT_UPLOADED = "document_uploaded"
     MESSAGE_CREATED = "message_created"
+
+
+class DeclarationStatus(str, Enum):
+    PENDING = "pending"
+    SIGNED = "signed"

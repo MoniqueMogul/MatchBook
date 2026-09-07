@@ -29,7 +29,7 @@ from app.db.db_enum import (
     DocumentType,
     StorageProvider,
     MatchStatus,
-    LenderApprovedStatus, NDAStatus, NotificationType, EventType
+    LenderApprovedStatus, NDAStatus, NotificationType, EventType, DeclarationStatus
 )
 
 
@@ -1153,6 +1153,12 @@ class BusinessFinancials(Base):
         foreign_keys="Document.business_financials_id",
     )
 
+    declaration: Mapped["Declaration | None"] = relationship(
+        back_populates="business_financials",
+        foreign_keys="Declaration.business_financials_id",
+        uselist=False,
+    )
+
     __table_args__ = (
         CheckConstraint(
             "verified_arr IS NULL OR verified_arr >= 0",
@@ -1353,6 +1359,11 @@ class Document(Base):
     )
 
     nda: Mapped["NDA | None"] = relationship(
+        back_populates="document",
+        uselist=False,
+    )
+
+    declaration: Mapped["Declaration | None"] = relationship(
         back_populates="document",
         uselist=False,
     )
@@ -1925,4 +1936,63 @@ class Event(Base):
         DateTime(timezone=True),
         nullable=True,
         index=True,
+    )
+
+
+
+class Declaration(Base):
+    __tablename__ = "declarations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    business_financials_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("businesses_financials.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+
+    document_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="RESTRICT"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    status: Mapped[DeclarationStatus] = mapped_column(
+        String(30),
+        default=DeclarationStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+
+    version: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    seller_signed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    document: Mapped["Document"] = relationship(
+        back_populates="declaration",
+        uselist=False,
+    )
+
+    business_financials: Mapped["BusinessFinancials"] = relationship(
+        back_populates="declaration",
+        uselist=False,
     )
