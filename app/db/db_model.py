@@ -757,7 +757,7 @@ class Business(Base):
         index=True,
     )
 
-    idepotency_key: Mapped[str] = mapped_column(
+    idempotency_key: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
     )
