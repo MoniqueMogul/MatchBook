@@ -1951,7 +1951,7 @@ class Declaration(Base):
 
     business_financials_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("businesses_financials.id", ondelete="CASCADE"),
+        ForeignKey("business_financials.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
     )
