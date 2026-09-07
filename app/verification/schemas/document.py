@@ -37,6 +37,3 @@ class DocumentOut(BaseModel):
     declaration_signed_at: Optional[datetime]
     document_metadata: Optional[dict[str, Any]]
     uploaded_at: datetime
-
-    class Config:
-        from_attributes = True

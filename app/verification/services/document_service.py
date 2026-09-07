@@ -4,8 +4,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.db.db_enum import VerificationStatus
-from app.db.db_model import NDA
+from app.db.db_enum import DeclarationStatus, VerificationStatus
+from app.db.db_model import NDA, Declaration
 from app.verification.integrations import storage
 from app.verification.repositories import documents as documents_repo
 from app.verification.schemas.document import DocumentUploadRequest, DocumentUploadResponse
@@ -26,11 +26,23 @@ def initiate_upload(db: Session, request: DocumentUploadRequest) -> DocumentUplo
         bucket_name=bucket_name,
         object_key=object_key,
         verification_status=VerificationStatus.UPLOADING,
-        declaration_signed=request.declaration_signed,
-        declaration_signed_at=datetime.utcnow() if request.declaration_signed else None,
         buyer_financials_id=request.buyer_financials_id,
         business_financials_id=request.business_financials_id,
     )
+
+    if request.declaration_signed:
+        if document.business_financials_id is None:
+            raise ValueError("Authenticity declaration requires a business financials document")
+        declaration = Declaration(
+            business_financials_id=document.business_financials_id,
+            document_id=document.id,
+            status=DeclarationStatus.SIGNED,
+            version="1",
+            seller_signed_at=datetime.utcnow(),
+        )
+        db.add(declaration)
+        db.commit()
+        db.refresh(declaration)
 
     if request.nda_id is not None:
         nda = db.query(NDA).filter(NDA.id == request.nda_id).one_or_none()
@@ -52,7 +64,7 @@ def confirm_upload(db: Session, document_id: UUID) -> None:
     document = documents_repo.get_by_id(db, document_id)
     if document is None:
         raise ValueError(f"Document not found: {document_id}")
-    if not document.declaration_signed:
+    if document.declaration is None or document.declaration.status != DeclarationStatus.SIGNED:
         raise ValueError("Cannot process document without signed authenticity declaration")
 
     documents_repo.update_status(db, document_id, VerificationStatus.UPLOADED)

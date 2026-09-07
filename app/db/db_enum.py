@@ -128,3 +128,8 @@ class EventType(str, Enum):
     MESSAGE_CREATED = "message_created"
     DISCREPANCY_FLAGGED = "discrepancy_flagged"
     VERIFICATION_REVIEW_REQUIRED = "verification_review_required"
+
+
+class DeclarationStatus(str, Enum):
+    PENDING = "pending"
+    SIGNED = "signed"

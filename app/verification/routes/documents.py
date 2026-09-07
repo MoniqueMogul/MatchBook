@@ -3,6 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.db.db_enum import DeclarationStatus
 from app.verification.dependencies import get_current_user, get_db
 from app.verification.repositories import documents as documents_repo
 from app.verification.schemas.document import DocumentOut, DocumentUploadRequest, DocumentUploadResponse
@@ -27,4 +28,22 @@ def get_document(document_id: UUID, current_user=Depends(get_current_user), db: 
     document = documents_repo.get_by_id(db, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    return document
+
+    declaration = document.declaration
+
+    return DocumentOut(
+        id=document.id,
+        document_type=document.document_type,
+        original_filename=document.original_filename,
+        mime_type=document.mime_type,
+        file_size=document.file_size,
+        verification_status=document.verification_status,
+        verification_provider=document.verification_provider,
+        verified_at=document.verified_at,
+        declaration_signed=(
+            declaration is not None and declaration.status == DeclarationStatus.SIGNED
+        ),
+        declaration_signed_at=declaration.seller_signed_at if declaration is not None else None,
+        document_metadata=document.document_metadata,
+        uploaded_at=document.uploaded_at,
+    )
