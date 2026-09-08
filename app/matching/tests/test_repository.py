@@ -21,6 +21,7 @@ from app.matching.repository import (
     build_business_match_input,
     build_buyer_match_input,
     build_score_breakdown,
+    get_candidate_businesses,
     get_existing_match,
     upsert_match,
 )
@@ -249,6 +250,255 @@ def make_evaluation(
         ),
 
         meets_threshold=True,
+    )
+
+
+# ============================================================
+# DATABASE CANDIDATE FILTERING
+# ============================================================
+
+
+def _capture_candidate_query(
+    preferences: BuyerPreferences,
+):
+    """
+    Execute get_candidate_businesses with a mocked session and
+    return the SQLAlchemy Select statement passed to scalars().
+    """
+
+    session = Mock()
+
+    scalar_result = Mock()
+
+    scalar_result.all.return_value = []
+
+    session.scalars.return_value = (
+        scalar_result
+    )
+
+    result = get_candidate_businesses(
+        session,
+        preferences,
+    )
+
+    assert result == []
+
+    session.scalars.assert_called_once()
+
+    return (
+        session.scalars.call_args.args[
+            0
+        ]
+    )
+
+
+def test_candidate_query_filters_industry_in_database():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = None
+
+    preferences.target_industries = [
+        "HVAC",
+    ]
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "industry" in sql
+
+    assert "lower(" in sql
+
+
+def test_candidate_query_filters_single_state_in_database():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = {
+        "state": "Florida",
+    }
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "state" in sql
+
+    assert "lower(" in sql
+
+
+def test_candidate_query_filters_multiple_states_in_database():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = {
+        "state": [
+            "Florida",
+            "Georgia",
+        ],
+    }
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "state" in sql
+
+    assert " in " in sql
+
+
+def test_candidate_query_filters_city_in_database():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = {
+        "city": "Orlando",
+    }
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "city" in sql
+
+    assert "lower(" in sql
+
+
+def test_candidate_query_filters_county_in_database():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = {
+        "county": "Orange",
+    }
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "county" in sql
+
+    assert "lower(" in sql
+
+
+def test_candidate_query_combines_state_city_and_county():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = {
+        "state": "Florida",
+        "city": "Orlando",
+        "county": "Orange",
+    }
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "state" in sql
+    assert "city" in sql
+    assert "county" in sql
+
+
+def test_candidate_query_without_geography_has_no_location_filter():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = None
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    sql = str(
+        statement
+    ).lower()
+
+    assert "lower(businesses.state)" not in sql
+    assert "lower(businesses.city)" not in sql
+    assert "lower(businesses.county)" not in sql
+
+
+def test_candidate_query_applies_price_tolerance_ceiling():
+    preferences = (
+        make_buyer_preferences()
+    )
+
+    preferences.target_locations = None
+
+    preferences.target_industries = None
+
+    preferences.maximum_purchase_price = (
+        Decimal(
+            "500000"
+        )
+    )
+
+    statement = (
+        _capture_candidate_query(
+            preferences
+        )
+    )
+
+    compiled = (
+        statement.compile()
+    )
+
+    parameter_values = list(
+        compiled.params.values()
+    )
+
+    assert (
+        Decimal(
+            "575000.00"
+        )
+        in parameter_values
     )
 
 

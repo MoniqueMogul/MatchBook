@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +11,8 @@ from app.matching.schemas import (
 from app.matching.service import (
     evaluate_candidate,
     rank_candidates,
+    rank_eligible_candidates,
+    score_candidate,
 )
 
 
@@ -236,6 +239,54 @@ def test_dimension_contributions_equal_final_score():
 
 
 # ============================================================
+# PRE-FILTERED CANDIDATE SCORING
+# ============================================================
+
+
+def test_score_candidate_scores_already_eligible_business():
+    buyer = make_buyer()
+    business = make_business()
+
+    result = score_candidate(
+        buyer,
+        business,
+        minimum_threshold=0.0,
+    )
+
+    assert result.eligible is True
+    assert result.failed_constraints == []
+    assert result.score is not None
+    assert result.percentage is not None
+
+
+@patch(
+    "app.matching.service."
+    "evaluate_eligibility"
+)
+def test_rank_eligible_candidates_does_not_repeat_hard_eligibility(
+    mock_evaluate_eligibility,
+):
+    buyer = make_buyer()
+
+    ranked = rank_eligible_candidates(
+        buyer,
+        [
+            make_business(
+                business_id=1,
+            ),
+            make_business(
+                business_id=2,
+            ),
+        ],
+        minimum_threshold=0.0,
+    )
+
+    assert len(ranked) == 2
+
+    mock_evaluate_eligibility.assert_not_called()
+
+
+# ============================================================
 # THRESHOLD
 # ============================================================
 
@@ -421,6 +472,23 @@ def test_top_n_zero_returns_empty_list():
     buyer = make_buyer()
 
     ranked = rank_candidates(
+        buyer,
+        [
+            make_business(
+                business_id=1,
+            )
+        ],
+        minimum_threshold=0.0,
+        top_n=0,
+    )
+
+    assert ranked == []
+
+
+def test_rank_eligible_top_n_zero_returns_empty_list():
+    buyer = make_buyer()
+
+    ranked = rank_eligible_candidates(
         buyer,
         [
             make_business(

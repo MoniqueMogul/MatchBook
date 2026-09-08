@@ -25,7 +25,7 @@ from app.matching.schemas import (
 )
 
 from app.matching.service import (
-    rank_candidates,
+    rank_eligible_candidates,
 )
 
 
@@ -109,11 +109,9 @@ def recalculate_matches_for_buyer(
             ↓
         BuyerPreferences
             ↓
-        Candidate Businesses
+        Database hard-filtered candidate businesses
             ↓
         Database model -> Matching input mapping
-            ↓
-        Hard eligibility filters
             ↓
         Deterministic FIT scoring
             ↓
@@ -124,6 +122,9 @@ def recalculate_matches_for_buyer(
         Persist Match records
             ↓
         Commit transaction
+
+    Hard eligibility is intentionally handled by
+    get_candidate_businesses() at the database layer.
 
     PostgreSQL remains the system of record.
 
@@ -168,7 +169,7 @@ def recalculate_matches_for_buyer(
         )
 
         # ====================================================
-        # LOAD CANDIDATE BUSINESSES
+        # LOAD HARD-FILTERED CANDIDATE BUSINESSES
         # ====================================================
 
         businesses = (
@@ -195,11 +196,11 @@ def recalculate_matches_for_buyer(
             return []
 
         # ====================================================
-        # MATCH + RANK
+        # SCORE + RANK ALREADY-ELIGIBLE CANDIDATES
         # ====================================================
 
         ranked_matches = (
-            rank_candidates(
+            rank_eligible_candidates(
                 buyer_input,
                 candidate_inputs,
                 minimum_threshold=(

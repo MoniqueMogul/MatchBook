@@ -319,7 +319,7 @@ def test_build_candidate_inputs_skips_incomplete_business(
 )
 @patch(
     "app.matching.db_service."
-    "rank_candidates"
+    "rank_eligible_candidates"
 )
 @patch(
     "app.matching.db_service."
@@ -571,7 +571,7 @@ def test_all_incomplete_candidates_returns_empty_list(
 )
 @patch(
     "app.matching.db_service."
-    "rank_candidates"
+    "rank_eligible_candidates"
 )
 @patch(
     "app.matching.db_service."

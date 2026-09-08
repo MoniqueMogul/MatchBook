@@ -5,8 +5,6 @@ from app.matching.config import (
 )
 
 from app.matching.eligibility import (
-    check_geography_eligibility,
-    check_industry_eligibility,
     evaluate_eligibility,
 )
 
@@ -32,131 +30,28 @@ from app.matching.scoring import (
 )
 
 
-def evaluate_candidate(
+def score_candidate(
     buyer: BuyerMatchInput,
     business: BusinessMatchInput,
     *,
     minimum_threshold: float = DEFAULT_MIN_FIT_THRESHOLD,
 ) -> MatchEvaluation:
     """
-    Evaluate one business against one buyer.
+    Score a business that has already passed hard eligibility.
 
-    V1 workflow:
-
-        Hard Eligibility
-             ↓
-        Dimension Scoring
-             ↓
-        Weighted FIT Score
-             ↓
-        Threshold Evaluation
+    This function intentionally does not run hard eligibility checks.
+    It is used by database-backed matching after PostgreSQL has
+    already applied the hard constraints.
     """
 
-    eligibility = evaluate_eligibility(
-        target_industries=(
-            buyer.target_industries
-        ),
-        target_locations=(
-            buyer.target_locations
-        ),
-        maximum_purchase_price=(
-            buyer.maximum_purchase_price
-        ),
-        minimum_sde=(
-            buyer.minimum_sde
-        ),
-
-        minimum_arr=(
-            buyer.minimum_arr
-        ),
-
-        minimum_years_in_operation=(
-            buyer.minimum_years_in_operation
-        ),
-
-        business_industry=(
-            business.industry
-        ),
-        business_city=(
-            business.city
-        ),
-        business_county=(
-            business.county
-        ),
-        business_state=(
-            business.state
-        ),
-        asking_price=(
-            business.asking_price
-        ),
-        seller_sde=(
-            business.sde
-        ),
-        seller_arr=(
-            business.arr
-        ),
-        business_years_in_operation=(
-            business.years_in_operation
-        ),
+    # Industry and geography are V1 hard filters with zero scoring
+    # weight. Reaching this function means both already passed.
+    industry_score = calculate_industry_score(
+        True
     )
 
-    if not eligibility.eligible:
-        return MatchEvaluation(
-            buyer_id=(
-                buyer.buyer_id
-            ),
-            business_id=(
-                business.business_id
-            ),
-
-            eligible=False,
-
-            failed_constraints=(
-                eligibility.failed_constraints
-            ),
-
-            score=None,
-            percentage=None,
-
-            dimensions={},
-
-            meets_threshold=False,
-        )
-
-    # ========================================================
-    # INDUSTRY
-    # ========================================================
-
-    industry_matches = (
-        check_industry_eligibility(
-            buyer.target_industries,
-            business.industry,
-        )
-    )
-
-    industry_score = (
-        calculate_industry_score(
-            industry_matches
-        )
-    )
-
-    # ========================================================
-    # GEOGRAPHY
-    # ========================================================
-
-    geography_matches = (
-        check_geography_eligibility(
-            buyer.target_locations,
-            business_city=business.city,
-            business_county=business.county,
-            business_state=business.state,
-        )
-    )
-
-    geography_score = (
-        calculate_geography_score(
-            geography_matches
-        )
+    geography_score = calculate_geography_score(
+        True
     )
 
     # ========================================================
@@ -402,6 +297,181 @@ def evaluate_candidate(
             >= minimum_threshold
         ),
     )
+
+
+
+
+def evaluate_candidate(
+    buyer: BuyerMatchInput,
+    business: BusinessMatchInput,
+    *,
+    minimum_threshold: float = DEFAULT_MIN_FIT_THRESHOLD,
+) -> MatchEvaluation:
+    """
+    Evaluate one business against one buyer.
+
+    V1 workflow:
+
+        Hard Eligibility
+             ↓
+        Dimension Scoring
+             ↓
+        Weighted FIT Score
+             ↓
+        Threshold Evaluation
+    """
+
+    eligibility = evaluate_eligibility(
+        target_industries=(
+            buyer.target_industries
+        ),
+        target_locations=(
+            buyer.target_locations
+        ),
+        maximum_purchase_price=(
+            buyer.maximum_purchase_price
+        ),
+        minimum_sde=(
+            buyer.minimum_sde
+        ),
+
+        minimum_arr=(
+            buyer.minimum_arr
+        ),
+
+        minimum_years_in_operation=(
+            buyer.minimum_years_in_operation
+        ),
+
+        business_industry=(
+            business.industry
+        ),
+        business_city=(
+            business.city
+        ),
+        business_county=(
+            business.county
+        ),
+        business_state=(
+            business.state
+        ),
+        asking_price=(
+            business.asking_price
+        ),
+        seller_sde=(
+            business.sde
+        ),
+        seller_arr=(
+            business.arr
+        ),
+        business_years_in_operation=(
+            business.years_in_operation
+        ),
+    )
+
+    if not eligibility.eligible:
+        return MatchEvaluation(
+            buyer_id=(
+                buyer.buyer_id
+            ),
+            business_id=(
+                business.business_id
+            ),
+
+            eligible=False,
+
+            failed_constraints=(
+                eligibility.failed_constraints
+            ),
+
+            score=None,
+            percentage=None,
+
+            dimensions={},
+
+            meets_threshold=False,
+        )
+
+    return score_candidate(
+        buyer,
+        business,
+        minimum_threshold=(
+            minimum_threshold
+        ),
+    )
+
+
+def rank_eligible_candidates(
+    buyer: BuyerMatchInput,
+    businesses: list[
+        BusinessMatchInput
+    ],
+    *,
+    minimum_threshold: float = DEFAULT_MIN_FIT_THRESHOLD,
+    top_n: int = DEFAULT_TOP_N_MATCHES,
+) -> list[RankedMatch]:
+    """
+    Score and rank businesses that already passed database-level
+    hard eligibility filters.
+
+    Unlike rank_candidates(), this function intentionally does not
+    run hard eligibility again.
+    """
+
+    if top_n <= 0:
+        return []
+
+    evaluations = [
+        score_candidate(
+            buyer,
+            business,
+            minimum_threshold=(
+                minimum_threshold
+            ),
+        )
+        for business in businesses
+    ]
+
+    qualifying = [
+        evaluation
+        for evaluation
+        in evaluations
+        if (
+            evaluation.meets_threshold
+            and evaluation.score
+            is not None
+        )
+    ]
+
+    qualifying.sort(
+        key=lambda evaluation: (
+            evaluation.score
+            if evaluation.score
+            is not None
+            else 0.0
+        ),
+        reverse=True,
+    )
+
+    qualifying = qualifying[
+        :top_n
+    ]
+
+    return [
+        RankedMatch(
+            rank=index,
+            evaluation=(
+                evaluation
+            ),
+        )
+        for (
+            index,
+            evaluation,
+        ) in enumerate(
+            qualifying,
+            start=1,
+        )
+    ]
 
 
 def rank_candidates(

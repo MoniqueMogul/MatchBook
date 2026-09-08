@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.db_enum import BusinessStatus, MatchStatus
@@ -148,21 +148,21 @@ def get_candidate_businesses(
     preferences: BuyerPreferences,
 ) -> list[Business]:
     """
-    Retrieve candidate businesses using inexpensive database-level
-    hard constraints before detailed Matching Engine evaluation.
+    Retrieve hard-eligible candidate businesses directly from
+    PostgreSQL before deterministic FIT scoring.
 
-    PostgreSQL remains the source of truth.
-
-    Current pre-filters:
+    Database-level hard filters:
         - Active business
         - Industry
-        - Maximum purchase price + tolerance
+        - Geography
+        - Maximum purchase price + configured tolerance
         - Minimum SDE
         - Minimum ARR
         - Minimum years in operation
 
-    Geography is still evaluated by the pure eligibility layer
-    because target_locations is structured JSON data.
+    Keeping hard constraints in PostgreSQL prevents the backend
+    from loading large numbers of businesses only to reject them
+    later in Python.
     """
 
     statement = (
@@ -175,15 +175,15 @@ def get_candidate_businesses(
         )
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # INDUSTRY
-    # --------------------------------------------------------
+    # ========================================================
 
     if preferences.target_industries:
         industries = [
             str(
                 industry
-            ).strip()
+            ).strip().lower()
             for industry
             in preferences.target_industries
             if str(
@@ -192,17 +192,100 @@ def get_candidate_businesses(
         ]
 
         if industries:
-            statement = (
-                statement.where(
-                    Business.industry.in_(
-                        industries
-                    )
+            statement = statement.where(
+                func.lower(
+                    Business.industry
+                ).in_(
+                    industries
                 )
             )
 
-    # --------------------------------------------------------
+    # ========================================================
+    # GEOGRAPHY
+    # ========================================================
+
+    if preferences.target_locations:
+        geography_fields = {
+            "state": Business.state,
+            "city": Business.city,
+            "county": Business.county,
+        }
+
+        for (
+            field_name,
+            database_column,
+        ) in geography_fields.items():
+
+            requested = (
+                preferences.target_locations.get(
+                    field_name
+                )
+            )
+
+            if requested is None:
+                continue
+
+            # ------------------------------------------------
+            # SINGLE LOCATION VALUE
+            # Example:
+            # {"state": "Florida"}
+            # ------------------------------------------------
+
+            if isinstance(
+                requested,
+                str,
+            ):
+                normalized_value = (
+                    requested.strip().lower()
+                )
+
+                if normalized_value:
+                    statement = (
+                        statement.where(
+                            func.lower(
+                                database_column
+                            )
+                            == normalized_value
+                        )
+                    )
+
+            # ------------------------------------------------
+            # MULTIPLE LOCATION VALUES
+            # Example:
+            # {"state": ["Florida", "Georgia"]}
+            # ------------------------------------------------
+
+            elif isinstance(
+                requested,
+                list,
+            ):
+                normalized_values = [
+                    value.strip().lower()
+                    for value
+                    in requested
+                    if (
+                        isinstance(
+                            value,
+                            str,
+                        )
+                        and value.strip()
+                    )
+                ]
+
+                if normalized_values:
+                    statement = (
+                        statement.where(
+                            func.lower(
+                                database_column
+                            ).in_(
+                                normalized_values
+                            )
+                        )
+                    )
+
+    # ========================================================
     # PURCHASE PRICE
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         preferences.maximum_purchase_price
@@ -222,68 +305,60 @@ def get_candidate_businesses(
             )
         )
 
-        statement = (
-            statement.where(
-                Business.asking_price.is_not(
-                    None
-                ),
-                Business.asking_price
-                <= absolute_ceiling,
-            )
+        statement = statement.where(
+            Business.asking_price.is_not(
+                None
+            ),
+            Business.asking_price
+            <= absolute_ceiling,
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # MINIMUM SDE
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         preferences.minimum_required_sde
         is not None
     ):
-        statement = (
-            statement.where(
-                Business.sde.is_not(
-                    None
-                ),
-                Business.sde
-                >= preferences.minimum_required_sde,
-            )
+        statement = statement.where(
+            Business.sde.is_not(
+                None
+            ),
+            Business.sde
+            >= preferences.minimum_required_sde,
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # MINIMUM ARR
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         preferences.minimum_required_arr
         is not None
     ):
-        statement = (
-            statement.where(
-                Business.arr.is_not(
-                    None
-                ),
-                Business.arr
-                >= preferences.minimum_required_arr,
-            )
+        statement = statement.where(
+            Business.arr.is_not(
+                None
+            ),
+            Business.arr
+            >= preferences.minimum_required_arr,
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # MINIMUM YEARS IN OPERATION
-    # --------------------------------------------------------
+    # ========================================================
 
     if (
         preferences.minimum_years_in_operation
         is not None
     ):
-        statement = (
-            statement.where(
-                Business.years_in_operation.is_not(
-                    None
-                ),
-                Business.years_in_operation
-                >= preferences.minimum_years_in_operation,
-            )
+        statement = statement.where(
+            Business.years_in_operation.is_not(
+                None
+            ),
+            Business.years_in_operation
+            >= preferences.minimum_years_in_operation,
         )
 
     result = session.scalars(
