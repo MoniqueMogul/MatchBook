@@ -42,6 +42,7 @@ celery_app.conf.update(
     task_queues=(
         Queue("outbox"),
         Queue("notifications"),
+        Queue("matching"),
     ),
 
     task_routes={
@@ -51,6 +52,10 @@ celery_app.conf.update(
 
         "app.notifications.tasks.process_notification_event": {
             "queue": "notifications",
+        },
+
+        "app.matching.tasks.process_matching_event": {
+            "queue": "matching",
         },
     },
 )
