@@ -162,7 +162,10 @@ def test_create_business_persists_idempotency_key() -> None:
         session
     )
 
-    created = repository.create_business(
+    (
+        created,
+        was_created,
+    ) = repository.create_business(
         seller_user_id,
         BusinessCreate(
             business_type="Service",
@@ -178,6 +181,7 @@ def test_create_business_persists_idempotency_key() -> None:
     )
 
     assert created is added
+    assert was_created is True
 
     assert isinstance(
         added,
@@ -204,7 +208,6 @@ def test_create_business_persists_idempotency_key() -> None:
     session.refresh.assert_called_once_with(
         added
     )
-
 
 def test_create_business_reuses_existing_idempotent_result() -> None:
 
@@ -239,7 +242,10 @@ def test_create_business_reuses_existing_idempotent_result() -> None:
         session
     )
 
-    result = repository.create_business(
+    (
+        result,
+        was_created,
+    ) = repository.create_business(
         seller_user_id,
         BusinessCreate(
             business_type="Service",
@@ -251,6 +257,7 @@ def test_create_business_reuses_existing_idempotent_result() -> None:
     )
 
     assert result is existing
+    assert was_created is False
 
     session.add.assert_not_called()
     session.commit.assert_not_called()
@@ -303,7 +310,10 @@ def test_create_business_recovers_from_idempotency_race() -> None:
         session
     )
 
-    result = repository.create_business(
+    (
+        result,
+        was_created,
+    ) = repository.create_business(
         seller_user_id,
         BusinessCreate(
             business_type="Service",
@@ -315,10 +325,10 @@ def test_create_business_recovers_from_idempotency_race() -> None:
     )
 
     assert result is existing
+    assert was_created is False
 
     session.rollback.assert_called_once()
     session.refresh.assert_not_called()
-
 
 def test_update_business_changes_only_supplied_fields() -> None:
 

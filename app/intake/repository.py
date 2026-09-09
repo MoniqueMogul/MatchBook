@@ -343,7 +343,7 @@ class IntakeRepository:
         seller_user_id: UUID,
         data: BusinessCreate,
         idempotency_key: str,
-    ) -> Business:
+    ) -> tuple[Business, bool]:
 
         seller = (
             self.get_seller_profile_by_user_id(
@@ -365,7 +365,10 @@ class IntakeRepository:
         )
 
         if existing is not None:
-            return existing
+            return (
+                existing,
+                False,
+            )
 
         business = Business(
             seller_id=seller.id,
@@ -394,7 +397,10 @@ class IntakeRepository:
             )
 
             if existing is not None:
-                return existing
+                return (
+                    existing,
+                    False,
+                )
 
             raise IntakeConflictError(
                 "Database constraints prevented "
@@ -405,7 +411,10 @@ class IntakeRepository:
             business
         )
 
-        return business
+        return (
+            business,
+            True,
+        )
 
     def get_business_for_seller(
         self,

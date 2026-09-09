@@ -4,7 +4,10 @@ from types import (
     ModuleType,
     SimpleNamespace,
 )
-from unittest.mock import MagicMock
+from unittest.mock import (
+    MagicMock,
+    patch,
+)
 from uuid import uuid4
 
 
@@ -35,6 +38,7 @@ from fastapi.testclient import TestClient
 from app.auth.dependencies import (
     get_current_user_id,
 )
+from app.db.db_enum import EventType
 from app.intake.dependencies import (
     get_intake_repository,
 )
@@ -70,6 +74,74 @@ def build_client(
     return (
         TestClient(app),
         authenticated_user_id,
+    )
+
+
+def build_buyer_profile_result(
+    *,
+    user_id,
+    buyer_id,
+) -> SimpleNamespace:
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    return SimpleNamespace(
+        id=buyer_id,
+        user_id=user_id,
+        buyer_type="first_time_owner",
+        current_industry="HVAC",
+        current_position=None,
+        business_experience_years=None,
+        relevant_experience=None,
+        available_hours_per_week=None,
+        city=None,
+        county=None,
+        state=None,
+        zip_code=None,
+        verification_status="unverified",
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def build_business_result(
+    *,
+    seller_id,
+    business_id,
+) -> SimpleNamespace:
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    return SimpleNamespace(
+        id=business_id,
+        seller_id=seller_id,
+        legal_name=None,
+        dba=None,
+        business_type="Service",
+        industry="HVAC",
+        city="Austin",
+        county=None,
+        state="Texas",
+        zip_code=None,
+        years_in_operation=None,
+        number_of_locations=None,
+        number_of_routes=None,
+        arr=None,
+        customer_concentration=None,
+        asking_price=None,
+        sde=None,
+        owner_involvement_hours_per_week=None,
+        transition_training_days=None,
+        deal_preference=None,
+        preferred_sale_timeline=None,
+        verification_status="unverified",
+        status="draft",
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -120,14 +192,18 @@ def test_duplicate_buyer_profile_returns_409() -> None:
         repository
     )
 
-    response = client.post(
-        "/intake/buyers/profile",
-        json={
-            "buyer_type": (
-                "first_time_owner"
-            ),
-        },
-    )
+    with patch(
+        "app.intake.routes.publish_event"
+    ) as publish_event_mock:
+
+        response = client.post(
+            "/intake/buyers/profile",
+            json={
+                "buyer_type": (
+                    "first_time_owner"
+                ),
+            },
+        )
 
     assert (
         response.status_code
@@ -151,6 +227,79 @@ def test_duplicate_buyer_profile_returns_409() -> None:
     assert (
         call.args[0]
         == user_id
+    )
+
+    publish_event_mock.assert_not_called()
+
+
+def test_create_buyer_profile_publishes_matching_event() -> None:
+
+    repository = MagicMock()
+
+    buyer_id = uuid4()
+
+    client, user_id = build_client(
+        repository
+    )
+
+    repository.create_buyer_profile.return_value = (
+        build_buyer_profile_result(
+            user_id=user_id,
+            buyer_id=buyer_id,
+        )
+    )
+
+    with patch(
+        "app.intake.routes.publish_event"
+    ) as publish_event_mock:
+
+        response = client.post(
+            "/intake/buyers/profile",
+            json={
+                "buyer_type": (
+                    "first_time_owner"
+                ),
+                "current_industry": "HVAC",
+            },
+        )
+
+    assert (
+        response.status_code
+        == 201
+    )
+
+    repository.create_buyer_profile.assert_called_once()
+
+    call = (
+        repository
+        .create_buyer_profile
+        .call_args
+    )
+
+    assert (
+        call.args[0]
+        == user_id
+    )
+
+    publish_event_mock.assert_called_once_with(
+        event_type=(
+            EventType.BUYER_CREATED
+        ),
+        message={
+            "event_type": "buyer_created",
+            "entity_type": "buyer",
+            "entity_id": str(
+                buyer_id
+            ),
+            "payload": {
+                "buyer_id": str(
+                    buyer_id
+                ),
+                "user_id": str(
+                    user_id
+                ),
+            },
+        },
     )
 
 
@@ -209,65 +358,45 @@ def test_buyer_readiness_returns_missing_fields() -> None:
     )
 
 
-def test_create_business_uses_auth_user_and_idempotency_key() -> None:
+def test_create_business_uses_auth_user_and_publishes_matching_event() -> None:
 
     repository = MagicMock()
 
     seller_id = uuid4()
     business_id = uuid4()
 
-    now = datetime.now(
-        timezone.utc
+    business = build_business_result(
+        seller_id=seller_id,
+        business_id=business_id,
     )
 
     repository.create_business.return_value = (
-        SimpleNamespace(
-            id=business_id,
-            seller_id=seller_id,
-            legal_name=None,
-            dba=None,
-            business_type="Service",
-            industry="HVAC",
-            city="Austin",
-            county=None,
-            state="Texas",
-            zip_code=None,
-            years_in_operation=None,
-            number_of_locations=None,
-            number_of_routes=None,
-            arr=None,
-            customer_concentration=None,
-            asking_price=None,
-            sde=None,
-            owner_involvement_hours_per_week=None,
-            transition_training_days=None,
-            deal_preference=None,
-            preferred_sale_timeline=None,
-            verification_status="unverified",
-            status="draft",
-            created_at=now,
-            updated_at=now,
-        )
+        business,
+        True,
     )
 
     client, user_id = build_client(
         repository
     )
 
-    response = client.post(
-        "/intake/sellers/businesses",
-        headers={
-            "Idempotency-Key": (
-                "business-request-123"
-            ),
-        },
-        json={
-            "business_type": "Service",
-            "industry": "HVAC",
-            "city": "Austin",
-            "state": "Texas",
-        },
-    )
+    with patch(
+        "app.intake.routes.publish_event"
+    ) as publish_event_mock:
+
+        response = client.post(
+            "/intake/sellers/businesses",
+            headers={
+                "Idempotency-Key": (
+                    "business-request-123"
+                ),
+            },
+            json={
+                "business_type": "Service",
+                "industry": "HVAC",
+                "city": "Austin",
+                "state": "Texas",
+            },
+        )
 
     assert (
         response.status_code
@@ -289,6 +418,78 @@ def test_create_business_uses_auth_user_and_idempotency_key() -> None:
         call.args[2]
         == "business-request-123"
     )
+
+    publish_event_mock.assert_called_once_with(
+        event_type=(
+            EventType.BUSINESS_CREATED
+        ),
+        message={
+            "event_type": "business_created",
+            "entity_type": "business",
+            "entity_id": str(
+                business_id
+            ),
+            "payload": {
+                "business_id": str(
+                    business_id
+                ),
+                "seller_id": str(
+                    seller_id
+                ),
+                "seller_user_id": str(
+                    user_id
+                ),
+            },
+        },
+    )
+
+
+def test_idempotent_business_replay_does_not_publish_duplicate_event() -> None:
+
+    repository = MagicMock()
+
+    seller_id = uuid4()
+    business_id = uuid4()
+
+    business = build_business_result(
+        seller_id=seller_id,
+        business_id=business_id,
+    )
+
+    repository.create_business.return_value = (
+        business,
+        False,
+    )
+
+    client, _ = build_client(
+        repository
+    )
+
+    with patch(
+        "app.intake.routes.publish_event"
+    ) as publish_event_mock:
+
+        response = client.post(
+            "/intake/sellers/businesses",
+            headers={
+                "Idempotency-Key": (
+                    "same-request"
+                ),
+            },
+            json={
+                "business_type": "Service",
+                "industry": "HVAC",
+                "city": "Austin",
+                "state": "Texas",
+            },
+        )
+
+    assert (
+        response.status_code
+        == 201
+    )
+
+    publish_event_mock.assert_not_called()
 
 
 def test_create_business_requires_idempotency_key() -> None:
