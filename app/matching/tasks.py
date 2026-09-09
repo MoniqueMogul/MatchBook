@@ -2,10 +2,13 @@ import logging
 from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.celery_app import celery_app
+from app.core.celery_app import celery_app
+from app.db.session import SessionLocal
 
 from app.matching.cache import (
     get_match_cache,
@@ -14,6 +17,11 @@ from app.matching.cache import (
 from app.matching.config import (
     DEFAULT_MIN_FIT_THRESHOLD,
     DEFAULT_TOP_N_MATCHES,
+)
+
+from app.matching.db_service import (
+    recalculate_matches_for_business,
+    recalculate_matches_for_buyer,
 )
 
 from app.matching.schemas import (
@@ -37,6 +45,7 @@ def _to_decimal(
     """
     Safely convert serialized numbers into Decimal.
     """
+
     return Decimal(
         str(
             value
@@ -268,7 +277,221 @@ def _build_business_input(
 
 
 # ============================================================
-# CELERY MATCHING TASK
+# EVENT HELPERS
+# ============================================================
+
+
+def _event_uuid(
+    event: dict[str, Any],
+    payload_key: str,
+) -> UUID:
+    """
+    Extract the entity UUID from an incoming event.
+
+    Intake currently includes buyer_id/business_id
+    in the event payload. entity_id is retained as a
+    fallback because the Outbox event also tracks it.
+    """
+
+    payload = (
+        event.get(
+            "payload"
+        )
+        or {}
+    )
+
+    raw_id = (
+        payload.get(
+            payload_key
+        )
+        or event.get(
+            "entity_id"
+        )
+    )
+
+    if raw_id is None:
+        raise ValueError(
+            (
+                f"Event is missing {payload_key} "
+                "and entity_id"
+            )
+        )
+
+    try:
+        return UUID(
+            str(
+                raw_id
+            )
+        )
+
+    except (
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        raise ValueError(
+            (
+                f"Invalid UUID for "
+                f"{payload_key}: {raw_id}"
+            )
+        ) from exc
+
+
+# ============================================================
+# EVENT-DRIVEN MATCHING TASK
+# ============================================================
+
+
+@celery_app.task(
+    bind=True,
+    name=(
+        "app.matching.tasks."
+        "process_matching_event"
+    ),
+    autoretry_for=(
+        TimeoutError,
+        ConnectionError,
+        SQLAlchemyError,
+    ),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=3,
+)
+def process_matching_event(
+    self,
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Consume Intake/Outbox events that trigger matching.
+
+    Supported events:
+
+        BUYER_CREATED
+            -> load buyer data from PostgreSQL
+            -> recalculate matches for that buyer
+
+        BUSINESS_CREATED
+            -> validate/load the business from PostgreSQL
+            -> recalculate matches for match-ready buyers
+
+    Event payloads are used only to identify the entity.
+    PostgreSQL remains the source of truth for matching data.
+    """
+
+    event_type = str(
+        event.get(
+            "event_type",
+            "",
+        )
+    ).upper()
+
+    with SessionLocal() as session:
+
+        if event_type == "BUYER_CREATED":
+            buyer_id = _event_uuid(
+                event,
+                "buyer_id",
+            )
+
+            ranked_matches = (
+                recalculate_matches_for_buyer(
+                    session,
+                    buyer_id,
+                )
+            )
+
+            logger.info(
+                (
+                    "Processed BUYER_CREATED "
+                    "for buyer_id=%s; "
+                    "matches=%s"
+                ),
+                buyer_id,
+                len(
+                    ranked_matches
+                ),
+            )
+
+            return {
+                "status": "processed",
+                "event_type": (
+                    "BUYER_CREATED"
+                ),
+                "buyer_id": str(
+                    buyer_id
+                ),
+                "match_count": len(
+                    ranked_matches
+                ),
+            }
+
+        if event_type == "BUSINESS_CREATED":
+            business_id = _event_uuid(
+                event,
+                "business_id",
+            )
+
+            buyer_results = (
+                recalculate_matches_for_business(
+                    session,
+                    business_id,
+                )
+            )
+
+            total_matches = sum(
+                len(
+                    matches
+                )
+                for matches
+                in buyer_results.values()
+            )
+
+            logger.info(
+                (
+                    "Processed BUSINESS_CREATED "
+                    "for business_id=%s; "
+                    "buyers=%s; matches=%s"
+                ),
+                business_id,
+                len(
+                    buyer_results
+                ),
+                total_matches,
+            )
+
+            return {
+                "status": "processed",
+                "event_type": (
+                    "BUSINESS_CREATED"
+                ),
+                "business_id": str(
+                    business_id
+                ),
+                "buyers_processed": len(
+                    buyer_results
+                ),
+                "match_count": (
+                    total_matches
+                ),
+            }
+
+    logger.info(
+        (
+            "Ignoring unsupported "
+            "matching event_type=%s"
+        ),
+        event_type,
+    )
+
+    return {
+        "status": "ignored",
+        "event_type": event_type,
+    }
+
+
+# ============================================================
+# LEGACY / DIRECT MATCHING TASK
 # ============================================================
 
 
@@ -314,16 +537,11 @@ def rank_matches_task(
     """
     Asynchronously evaluate and rank businesses for one buyer.
 
-    Current integration boundary:
-        JSON-safe buyer/business payloads
-        -> Matching Engine
+    This task is retained for compatibility with the existing
+    direct JSON-safe task interface and tests.
 
-    Future production boundary:
-        buyer_id/event
-        -> PostgreSQL repository
-        -> Matching Engine
-        -> persisted Match records
-        -> Redis cache
+    Production event-driven matching now enters through
+    process_matching_event().
     """
 
     buyer = _build_buyer_input(
@@ -372,8 +590,10 @@ def rank_matches_task(
 
     except RedisError:
         logger.warning(
-            "Unable to cache matching results "
-            "for buyer_id=%s",
+            (
+                "Unable to cache matching results "
+                "for buyer_id=%s"
+            ),
             buyer.buyer_id,
             exc_info=True,
         )

@@ -12,10 +12,13 @@ from app.matching.config import (
 
 from app.matching.repository import (
     MatchingDataIncompleteError,
+    MatchingDataNotFoundError,
     build_business_match_input,
     build_buyer_match_input,
+    get_business,
     get_buyer_preferences,
     get_candidate_businesses,
+    get_match_ready_buyer_ids,
     upsert_match,
 )
 
@@ -253,5 +256,185 @@ def recalculate_matches_for_buyer(
             (
                 "Unable to recalculate matches "
                 f"for buyer_id={buyer_id}"
+            )
+        ) from exc
+
+def recalculate_matches_for_business(
+    session: Session,
+    business_id: UUID,
+    *,
+    minimum_threshold: float = (
+        DEFAULT_MIN_FIT_THRESHOLD
+    ),
+    top_n: int = (
+        DEFAULT_TOP_N_MATCHES
+    ),
+) -> dict[UUID, list[RankedMatch]]:
+    """
+    Recalculate matching for all match-ready buyers
+    when a business is created.
+
+    Because a new business can affect each buyer's
+    top-N ranking, the existing buyer-centric matching
+    workflow is reused.
+
+    The business is validated before recalculation begins.
+    """
+
+    try:
+        # ====================================================
+        # VALIDATE BUSINESS
+        # ====================================================
+
+        get_business(
+            session,
+            business_id,
+        )
+
+        # ====================================================
+        # LOAD MATCH-READY BUYERS
+        # ====================================================
+
+        buyer_ids = (
+            get_match_ready_buyer_ids(
+                session
+            )
+        )
+
+        if not buyer_ids:
+            return {}
+
+        # ====================================================
+        # RECALCULATE MATCHES
+        # ====================================================
+
+        results: dict[
+            UUID,
+            list[RankedMatch],
+        ] = {}
+
+        for buyer_id in buyer_ids:
+            results[buyer_id] = (
+                recalculate_matches_for_buyer(
+                    session,
+                    buyer_id,
+                    minimum_threshold=(
+                        minimum_threshold
+                    ),
+                    top_n=top_n,
+                )
+            )
+
+        return results
+
+    except Exception as exc:
+        logger.exception(
+            (
+                "Business-triggered matching failed "
+                "for business_id=%s"
+            ),
+            business_id,
+        )
+
+        if isinstance(
+            exc,
+            (
+                ValueError,
+                MatchingDataIncompleteError,
+                MatchingDataNotFoundError,
+                MatchingDatabaseServiceError,
+            ),
+        ):
+            raise
+
+        raise MatchingDatabaseServiceError(
+            (
+                "Unable to recalculate matches "
+                f"for business_id={business_id}"
+            )
+        ) from exc
+def recalculate_matches_for_business(
+    session: Session,
+    business_id: UUID,
+    *,
+    minimum_threshold: float = (
+        DEFAULT_MIN_FIT_THRESHOLD
+    ),
+    top_n: int = (
+        DEFAULT_TOP_N_MATCHES
+    ),
+) -> dict[UUID, list[RankedMatch]]:
+    """
+    Recalculate matching for all match-ready buyers
+    when a new business is created.
+
+    A newly created business can affect each buyer's
+    top-N ranking, so the buyer-centric matching flow
+    is intentionally reused.
+
+    The supplied business_id is validated first so
+    invalid events fail early.
+    """
+
+    try:
+        # Validate that the business exists.
+        from app.matching.repository import (
+            get_business,
+            get_match_ready_buyer_ids,
+        )
+
+        get_business(
+            session,
+            business_id,
+        )
+
+        buyer_ids = (
+            get_match_ready_buyer_ids(
+                session
+            )
+        )
+
+        results: dict[
+            UUID,
+            list[RankedMatch],
+        ] = {}
+
+        for buyer_id in buyer_ids:
+            results[buyer_id] = (
+                recalculate_matches_for_buyer(
+                    session,
+                    buyer_id,
+                    minimum_threshold=(
+                        minimum_threshold
+                    ),
+                    top_n=top_n,
+                )
+            )
+
+        return results
+
+    except Exception as exc:
+        logger.exception(
+            (
+                "Business-triggered matching failed "
+                "for business_id=%s"
+            ),
+            business_id,
+        )
+
+        if isinstance(
+            exc,
+            (
+                ValueError,
+                MatchingDataIncompleteError,
+                MatchingDatabaseServiceError,
+            ),
+        ):
+            raise
+
+        raise MatchingDatabaseServiceError(
+            (
+                "Unable to recalculate matches "
+                f"for business_id={business_id}"
             )
         ) from exc

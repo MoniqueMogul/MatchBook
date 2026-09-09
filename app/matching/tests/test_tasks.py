@@ -1,3 +1,9 @@
+from uuid import UUID
+
+import pytest
+
+from unittest.mock import Mock, patch
+
 from unittest.mock import (
     Mock,
     patch,
@@ -6,6 +12,7 @@ from unittest.mock import (
 from app.matching.tasks import (
     _build_business_input,
     _build_buyer_input,
+    process_matching_event,
     rank_matches_task,
 )
 
@@ -359,3 +366,192 @@ def test_async_task_excludes_business_below_minimum_arr(
     )
 
     assert result == []
+
+# ============================================================
+# EVENT-DRIVEN MATCHING TESTS
+# ============================================================
+
+
+@patch(
+    "app.matching.tasks."
+    "recalculate_matches_for_buyer"
+)
+@patch(
+    "app.matching.tasks."
+    "SessionLocal"
+)
+def test_process_buyer_created_event(
+    mock_session_local,
+    mock_recalculate,
+):
+    buyer_id = (
+        "11111111-1111-1111-1111-111111111111"
+    )
+
+    fake_session = Mock()
+
+    mock_session_local.return_value.__enter__.return_value = (
+        fake_session
+    )
+
+    mock_recalculate.return_value = [
+        Mock(),
+        Mock(),
+    ]
+
+    result = (
+        process_matching_event.run(
+            {
+                "event_type": "BUYER_CREATED",
+                "entity_id": buyer_id,
+                "payload": {
+                    "buyer_id": buyer_id,
+                },
+            }
+        )
+    )
+
+    mock_recalculate.assert_called_once_with(
+        fake_session,
+        UUID(
+            buyer_id
+        ),
+    )
+
+    assert result == {
+        "status": "processed",
+        "event_type": "BUYER_CREATED",
+        "buyer_id": buyer_id,
+        "match_count": 2,
+    }
+
+
+@patch(
+    "app.matching.tasks."
+    "recalculate_matches_for_business"
+)
+@patch(
+    "app.matching.tasks."
+    "SessionLocal"
+)
+def test_process_business_created_event(
+    mock_session_local,
+    mock_recalculate,
+):
+    business_id = (
+        "22222222-2222-2222-2222-222222222222"
+    )
+
+    buyer_id = UUID(
+        "33333333-3333-3333-3333-333333333333"
+    )
+
+    fake_session = Mock()
+
+    mock_session_local.return_value.__enter__.return_value = (
+        fake_session
+    )
+
+    mock_recalculate.return_value = {
+        buyer_id: [
+            Mock(),
+            Mock(),
+            Mock(),
+        ],
+    }
+
+    result = (
+        process_matching_event.run(
+            {
+                "event_type": (
+                    "BUSINESS_CREATED"
+                ),
+                "entity_id": business_id,
+                "payload": {
+                    "business_id": (
+                        business_id
+                    ),
+                },
+            }
+        )
+    )
+
+    mock_recalculate.assert_called_once_with(
+        fake_session,
+        UUID(
+            business_id
+        ),
+    )
+
+    assert result == {
+        "status": "processed",
+        "event_type": (
+            "BUSINESS_CREATED"
+        ),
+        "business_id": business_id,
+        "buyers_processed": 1,
+        "match_count": 3,
+    }
+
+
+@patch(
+    "app.matching.tasks."
+    "SessionLocal"
+)
+def test_process_matching_event_ignores_unknown_event(
+    mock_session_local,
+):
+    fake_session = Mock()
+
+    mock_session_local.return_value.__enter__.return_value = (
+        fake_session
+    )
+
+    result = (
+        process_matching_event.run(
+            {
+                "event_type": (
+                    "DOCUMENT_UPLOADED"
+                ),
+                "payload": {},
+            }
+        )
+    )
+
+    assert result == {
+        "status": "ignored",
+        "event_type": (
+            "DOCUMENT_UPLOADED"
+        ),
+    }
+
+
+@patch(
+    "app.matching.tasks."
+    "SessionLocal"
+)
+def test_process_matching_event_rejects_invalid_uuid(
+    mock_session_local,
+):
+    fake_session = Mock()
+
+    mock_session_local.return_value.__enter__.return_value = (
+        fake_session
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid UUID",
+    ):
+        process_matching_event.run(
+            {
+                "event_type": (
+                    "BUYER_CREATED"
+                ),
+                "payload": {
+                    "buyer_id": (
+                        "not-a-valid-uuid"
+                    ),
+                },
+            }
+        )

@@ -142,6 +142,51 @@ def get_business(
 
     return business
 
+def get_match_ready_buyer_ids(
+    session: Session,
+) -> list[UUID]:
+    """
+    Return buyer IDs whose preferences contain all fields
+    required by the V1 deterministic Matching Engine.
+
+    Buyers with incomplete preferences are intentionally
+    excluded until their matching inputs are ready.
+    """
+
+    statement = (
+        select(
+            BuyerPreferences.buyer_id
+        )
+        .where(
+            BuyerPreferences.preferred_sde.is_not(
+                None
+            ),
+            BuyerPreferences.preferred_owner_hours_per_week.is_not(
+                None
+            ),
+            BuyerPreferences.required_transition_training_days.is_not(
+                None
+            ),
+            BuyerPreferences.deal_preference.is_not(
+                None
+            ),
+            BuyerPreferences.preferred_arr.is_not(
+                None
+            ),
+            BuyerPreferences.accepts_customer_concentration_above_25_percent.is_not(
+                None
+            ),
+        )
+    )
+
+    result = session.scalars(
+        statement
+    )
+
+    return list(
+        result.all()
+    )
+
 
 def get_candidate_businesses(
     session: Session,
