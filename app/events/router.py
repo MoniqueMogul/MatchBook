@@ -11,6 +11,19 @@ def publish_event(
 ) -> None:
 
     if event_type in {
+        EventType.BUYER_CREATED,
+        EventType.BUSINESS_CREATED,
+    }:
+        celery_app.send_task(
+            "app.matching.tasks.process_matching_event",
+            kwargs={
+                "event": message,
+            },
+            queue="matching",
+        )
+        return
+
+    if event_type in {
         EventType.MATCH_CREATED,
         EventType.MATCH_STATUS_CHANGED,
         EventType.VERIFICATION_COMPLETED,
