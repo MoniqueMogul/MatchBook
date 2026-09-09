@@ -4,6 +4,10 @@ from app.db.session import (
     check_database_connection,
 )
 
+from app.intake.routes import (
+    router as intake_router,
+)
+
 from app.matching.routes import (
     router as matching_router,
 )
@@ -66,6 +70,16 @@ def database_health_check() -> dict[str, str]:
         "status": "healthy",
         "service": "database",
     }
+
+
+# ============================================================
+# INTAKE ROUTER
+# ============================================================
+
+
+app.include_router(
+    intake_router
+)
 
 
 # ============================================================
