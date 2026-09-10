@@ -125,3 +125,9 @@ class EventType(str, Enum):
 class DeclarationStatus(str, Enum):
     PENDING = "pending"
     SIGNED = "signed"
+
+
+class OutboxStatus(str, Enum):
+    PENDING = "pending"
+    PUBLISHED = "published"
+    PROCESSED = "processed"

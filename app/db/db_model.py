@@ -29,7 +29,12 @@ from app.db.db_enum import (
     DocumentType,
     StorageProvider,
     MatchStatus,
-    LenderApprovedStatus, NDAStatus, NotificationType, EventType, DeclarationStatus
+    LenderApprovedStatus,
+    NDAStatus,
+    NotificationType,
+    EventType,
+    DeclarationStatus,
+    OutboxStatus
 )
 
 
@@ -757,7 +762,7 @@ class Business(Base):
         index=True,
     )
 
-    idepotency_key: Mapped[str] = mapped_column(
+    idempotency_key: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
     )
@@ -1893,13 +1898,20 @@ class Notification(Base):
     user: Mapped["User"] = relationship()
 
 
-class Event(Base):
-    __tablename__ = "events"
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
     )
 
     event_type: Mapped[EventType] = mapped_column(
@@ -1920,8 +1932,26 @@ class Event(Base):
         index=True,
     )
 
-    payload: Mapped[dict | None] = mapped_column(
+    payload: Mapped[dict] = mapped_column(
         JSONB,
+        nullable=False,
+    )
+
+    status: Mapped[OutboxStatus] = mapped_column(
+        String(30),
+        default=OutboxStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    last_error: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
     )
 
@@ -1929,6 +1959,12 @@ class Event(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+        index=True,
+    )
+
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
         index=True,
     )
 
