@@ -313,7 +313,16 @@ def test_buyer_readiness_returns_missing_fields() -> None:
                 "HVAC"
             ],
             target_locations={
-                "state": "Texas"
+                "provider": "locationiq",
+                "place_id": "test-texas",
+                "display_name": "Texas, United States",
+                "latitude": 31.0,
+                "longitude": -100.0,
+                "city": None,
+                "county": None,
+                "state": "Texas",
+                "country": "United States",
+                "country_code": "US",
             },
             maximum_purchase_price=500000,
             minimum_required_sde=100000,

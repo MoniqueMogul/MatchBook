@@ -9,6 +9,37 @@ from app.intake.schemas.buyer_preferences import (
 )
 
 
+def test_free_text_target_location_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        BuyerPreferencesUpsert(target_locations={"state": "Texas"})
+
+
+@pytest.mark.parametrize("changes", [
+    {"provider": "other"}, {"place_id": " "}, {"place_id": "x" * 101},
+    {"display_name": ""}, {"display_name": "x" * 501},
+    {"latitude": 91}, {"longitude": -181}, {"latitude": float("nan")},
+    {"city": "x" * 151}, {"county": "x" * 151},
+    {"state": "x" * 151}, {"country": "x" * 151},
+    {"country_code": "USA"}, {"country_code": "U"}, {"unexpected": True},
+])
+def test_invalid_selected_location_is_rejected(changes) -> None:
+    selected = {
+        "provider": "locationiq", "place_id": "123", "display_name": "Canada",
+        "latitude": 56.0, "longitude": -106.0,
+    }
+    with pytest.raises(ValidationError):
+        BuyerPreferencesUpsert(target_locations={**selected, **changes})
+
+
+def test_selected_location_without_address_counts_as_present() -> None:
+    preferences = BuyerPreferencesUpsert(target_locations={
+        "provider": "locationiq", "place_id": "123", "display_name": "Canada",
+        "latitude": 56.0, "longitude": -106.0, "country_code": "ca",
+    })
+    assert preferences.target_locations.has_any_value()
+    assert preferences.target_locations.country_code == "CA"
+
+
 def test_preferences_can_be_partial_during_draft() -> None:
 
     preferences = BuyerPreferencesUpsert(

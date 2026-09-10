@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class IntakeModel(BaseModel):
@@ -13,13 +15,20 @@ class IntakeModel(BaseModel):
 
 
 class TargetLocation(IntakeModel):
-    """Structured V1 geography preference."""
+    """A standardized location selected from LocationIQ autocomplete."""
 
-    state: str | None = None
-    city: str | None = None
-    county: str | None = None
+    provider: Literal["locationiq"]
+    place_id: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=500)
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    city: str | None = Field(default=None, max_length=150)
+    county: str | None = Field(default=None, max_length=150)
+    state: str | None = Field(default=None, max_length=150)
+    country: str | None = Field(default=None, max_length=150)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
 
-    @field_validator("state", "city", "county")
+    @field_validator("state", "city", "county", "country")
     @classmethod
     def blank_string_becomes_none(
         cls,
@@ -32,11 +41,10 @@ class TargetLocation(IntakeModel):
 
         return value or None
 
+    @field_validator("country_code", mode="before")
+    @classmethod
+    def uppercase_country_code(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
+
     def has_any_value(self) -> bool:
-        return any(
-            (
-                self.state,
-                self.city,
-                self.county,
-            )
-        )
+        return bool(self.provider and self.place_id and self.display_name)

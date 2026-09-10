@@ -111,7 +111,16 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
         user_id,
         BuyerPreferencesUpsert(
             target_locations={
+                "provider": "locationiq",
+                "place_id": "test-texas",
+                "display_name": "Texas, United States",
+                "latitude": 31.0,
+                "longitude": -100.0,
+                "city": None,
+                "county": None,
                 "state": "Texas",
+                "country": "United States",
+                "country_code": "US",
             },
             minimum_required_arr=150000,
         ),
@@ -129,7 +138,16 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
     assert (
         created.target_locations
         == {
+            "provider": "locationiq",
+            "place_id": "test-texas",
+            "display_name": "Texas, United States",
+            "latitude": 31.0,
+            "longitude": -100.0,
+            "city": None,
+            "county": None,
             "state": "Texas",
+            "country": "United States",
+            "country_code": "US",
         }
     )
 

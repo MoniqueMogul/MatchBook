@@ -9,6 +9,7 @@ from fastapi import (
     Depends,
     Header,
     HTTPException,
+    Query,
     status,
 )
 
@@ -18,6 +19,12 @@ from app.auth.dependencies import (
 from app.intake.dependencies import (
     get_intake_repository,
 )
+from app.intake.locationiq import (
+    LocationAutocompleteConfigurationError,
+    LocationAutocompleteProviderError,
+    autocomplete_locations,
+)
+from app.intake.schemas.common import TargetLocation
 from app.intake.repository import (
     IntakeConflictError,
     IntakeNotFoundError,
@@ -55,6 +62,26 @@ router = APIRouter(
     prefix="/intake",
     tags=["intake"],
 )
+
+
+@router.get("/locations/autocomplete", response_model=list[TargetLocation])
+def get_location_autocomplete(
+    q: str = Query(..., min_length=3, max_length=200),
+    limit: int = Query(8, ge=1, le=20),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> list[TargetLocation]:
+    try:
+        return autocomplete_locations(q, limit)
+    except LocationAutocompleteConfigurationError:
+        raise HTTPException(
+            status_code=503,
+            detail="Location autocomplete is not configured.",
+        ) from None
+    except LocationAutocompleteProviderError:
+        raise HTTPException(
+            status_code=502,
+            detail="Location autocomplete provider is unavailable.",
+        ) from None
 
 
 def _raise_http_error(
