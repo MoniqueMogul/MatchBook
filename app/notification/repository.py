@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.db_enum import NotificationType
 from app.db.db_model import Notification
+from app.notification.schema import NotificationCreate
 
 
 class NotificationRepositoryError(Exception):
@@ -103,14 +104,10 @@ class NotificationRepository:
         return notification
 
     def create_notification(
-        self,
-        *,
-        user_id: UUID,
-        notification_type: NotificationType,
-        title: str,
-        message: str,
-        related_entity_type: str | None = None,
-        related_entity_id: UUID | None = None,
+            self,
+            *,
+            user_id: UUID,
+            data: NotificationCreate,
     ) -> Notification:
         """
         Create one notification.
@@ -121,17 +118,10 @@ class NotificationRepository:
 
         notification = Notification(
             user_id=user_id,
-            type=notification_type,
-            title=title,
-            message=message,
-            related_entity_type=related_entity_type,
-            related_entity_id=related_entity_id,
+            **data.model_dump(),
         )
 
-        self.session.add(
-            notification
-        )
-
+        self.session.add(notification)
         self.session.flush()
 
         return notification
@@ -161,3 +151,5 @@ class NotificationRepository:
             self.session.flush()
 
         return notification
+
+
