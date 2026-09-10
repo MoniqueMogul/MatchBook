@@ -1,7 +1,5 @@
 from typing import NoReturn
 from uuid import UUID
-from app.db.db_enum import EventType
-from app.events.router import publish_event
 
 
 from fastapi import (
@@ -62,6 +60,18 @@ router = APIRouter(
     prefix="/intake",
     tags=["intake"],
 )
+
+
+def _enqueue_outbox_event(
+    event_id: UUID,
+) -> None:
+    """Load the worker lazily so routes remain config-independent."""
+
+    from app.events.tasks import send_outbox_event
+
+    send_outbox_event.delay(
+        str(event_id)
+    )
 
 
 @router.get("/locations/autocomplete", response_model=list[TargetLocation])
@@ -153,7 +163,7 @@ def create_buyer_profile(
 ) -> BuyerProfileRead:
 
     try:
-        profile = (
+        profile, outbox_event = (
             repository.create_buyer_profile(
                 current_user_id,
                 payload,
@@ -165,25 +175,8 @@ def create_buyer_profile(
             exc
         )
 
-    publish_event(
-        event_type=EventType.BUYER_CREATED,
-        message={
-            "event_type": (
-                EventType.BUYER_CREATED.value
-            ),
-            "entity_type": "buyer",
-            "entity_id": str(
-                profile.id
-            ),
-            "payload": {
-                "buyer_id": str(
-                    profile.id
-                ),
-                "user_id": str(
-                    profile.user_id
-                ),
-            },
-        },
+    _enqueue_outbox_event(
+        outbox_event.id
     )
 
     return BuyerProfileRead.model_validate(
@@ -474,6 +467,7 @@ def create_business(
         (
             business,
             was_created,
+            outbox_event,
         ) = repository.create_business(
             current_user_id,
             payload,
@@ -486,32 +480,8 @@ def create_business(
         )
 
     if was_created:
-        publish_event(
-            event_type=(
-                EventType.BUSINESS_CREATED
-            ),
-            message={
-                "event_type": (
-                    EventType
-                    .BUSINESS_CREATED
-                    .value
-                ),
-                "entity_type": "business",
-                "entity_id": str(
-                    business.id
-                ),
-                "payload": {
-                    "business_id": str(
-                        business.id
-                    ),
-                    "seller_id": str(
-                        business.seller_id
-                    ),
-                    "seller_user_id": str(
-                        current_user_id
-                    ),
-                },
-            },
+        _enqueue_outbox_event(
+            outbox_event.id
         )
 
     return BusinessRead.model_validate(
