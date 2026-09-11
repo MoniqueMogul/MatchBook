@@ -61,6 +61,10 @@ celery_app.conf.update(
             "queue": "outbox",
         },
 
+        "app.events.tasks.retry_pending_outbox_events": {
+                "queue": "outbox",
+        },
+
         "app.notification.tasks.process_notification_event": {
             "queue": "notifications",
         },
