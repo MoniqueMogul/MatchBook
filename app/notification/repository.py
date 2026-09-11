@@ -6,7 +6,6 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.db_enum import NotificationType
 from app.db.db_model import Notification
 from app.notification.schema import NotificationCreate
 
