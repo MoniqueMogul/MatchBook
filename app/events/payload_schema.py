@@ -11,6 +11,17 @@ class EventEnvelope(BaseModel):
     payload: dict
 
 
+class BuyerCreatedPayload(BaseModel):
+    buyer_id: UUID
+    user_id: UUID
+
+
+class BusinessCreatedPayload(BaseModel):
+    business_id: UUID
+    seller_id: UUID
+    seller_user_id: UUID
+
+
 class MatchCreatedPayload(BaseModel):
     user_id: UUID
     match_id: UUID

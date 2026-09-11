@@ -4,7 +4,7 @@ from uuid import UUID
 
 from app.core.celery_app import celery_app
 from app.db.database import SessionLocal
-from app.db.db_enum import OutboxStatus
+from app.db.db_enum import OutboxStatus, EventType
 from app.events.repository import OutboxRepository
 from app.events.router import publish_event
 
@@ -43,17 +43,19 @@ def send_outbox_event(
         if event.status != OutboxStatus.PENDING:
             return
 
+        event_type = EventType(event.event_type)
+
         message = {
             "event_id": str(event.id),
             "idempotency_key": event.idempotency_key,
-            "event_type": event.event_type.value,
+            "event_type": event_type.value,
             "entity_type": event.entity_type,
             "entity_id": str(event.entity_id),
             "payload": event.payload,
         }
 
         publish_event(
-            event_type=event.event_type,
+            event_type=event_type,
             message=message,
         )
 

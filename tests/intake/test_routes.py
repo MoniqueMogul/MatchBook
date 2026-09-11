@@ -38,14 +38,17 @@ from fastapi.testclient import TestClient
 from app.auth.dependencies import (
     get_current_user_id,
 )
-from app.db.db_enum import EventType
 from app.intake.dependencies import (
     get_intake_repository,
 )
 from app.intake.repository import (
     IntakeConflictError,
+    IntakeRepositoryError,
 )
-from app.intake.routes import router
+from app.intake.routes import (
+    _enqueue_outbox_event,
+    router,
+)
 
 
 def build_client(
@@ -193,8 +196,8 @@ def test_duplicate_buyer_profile_returns_409() -> None:
     )
 
     with patch(
-        "app.intake.routes.publish_event"
-    ) as publish_event_mock:
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
 
         response = client.post(
             "/intake/buyers/profile",
@@ -229,10 +232,10 @@ def test_duplicate_buyer_profile_returns_409() -> None:
         == user_id
     )
 
-    publish_event_mock.assert_not_called()
+    enqueue_mock.assert_not_called()
 
 
-def test_create_buyer_profile_publishes_matching_event() -> None:
+def test_create_buyer_profile_enqueues_persisted_outbox_event() -> None:
 
     repository = MagicMock()
 
@@ -242,16 +245,18 @@ def test_create_buyer_profile_publishes_matching_event() -> None:
         repository
     )
 
+    outbox_id = uuid4()
     repository.create_buyer_profile.return_value = (
         build_buyer_profile_result(
             user_id=user_id,
             buyer_id=buyer_id,
-        )
+        ),
+        SimpleNamespace(id=outbox_id),
     )
 
     with patch(
-        "app.intake.routes.publish_event"
-    ) as publish_event_mock:
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
 
         response = client.post(
             "/intake/buyers/profile",
@@ -281,26 +286,29 @@ def test_create_buyer_profile_publishes_matching_event() -> None:
         == user_id
     )
 
-    publish_event_mock.assert_called_once_with(
-        event_type=(
-            EventType.BUYER_CREATED
-        ),
-        message={
-            "event_type": "buyer_created",
-            "entity_type": "buyer",
-            "entity_id": str(
-                buyer_id
-            ),
-            "payload": {
-                "buyer_id": str(
-                    buyer_id
-                ),
-                "user_id": str(
-                    user_id
-                ),
-            },
-        },
+    enqueue_mock.assert_called_once_with(
+        outbox_id
     )
+
+
+def test_buyer_persistence_failure_does_not_enqueue() -> None:
+
+    repository = MagicMock()
+    repository.create_buyer_profile.side_effect = (
+        IntakeRepositoryError("outbox failed")
+    )
+    client, _ = build_client(repository)
+
+    with patch(
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
+        response = client.post(
+            "/intake/buyers/profile",
+            json={"buyer_type": "first_time_owner"},
+        )
+
+    assert response.status_code == 500
+    enqueue_mock.assert_not_called()
 
 
 def test_buyer_readiness_returns_missing_fields() -> None:
@@ -367,7 +375,7 @@ def test_buyer_readiness_returns_missing_fields() -> None:
     )
 
 
-def test_create_business_uses_auth_user_and_publishes_matching_event() -> None:
+def test_create_business_uses_auth_user_and_enqueues_outbox_event() -> None:
 
     repository = MagicMock()
 
@@ -379,9 +387,11 @@ def test_create_business_uses_auth_user_and_publishes_matching_event() -> None:
         business_id=business_id,
     )
 
+    outbox_id = uuid4()
     repository.create_business.return_value = (
         business,
         True,
+        SimpleNamespace(id=outbox_id),
     )
 
     client, user_id = build_client(
@@ -389,8 +399,8 @@ def test_create_business_uses_auth_user_and_publishes_matching_event() -> None:
     )
 
     with patch(
-        "app.intake.routes.publish_event"
-    ) as publish_event_mock:
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
 
         response = client.post(
             "/intake/sellers/businesses",
@@ -428,28 +438,8 @@ def test_create_business_uses_auth_user_and_publishes_matching_event() -> None:
         == "business-request-123"
     )
 
-    publish_event_mock.assert_called_once_with(
-        event_type=(
-            EventType.BUSINESS_CREATED
-        ),
-        message={
-            "event_type": "business_created",
-            "entity_type": "business",
-            "entity_id": str(
-                business_id
-            ),
-            "payload": {
-                "business_id": str(
-                    business_id
-                ),
-                "seller_id": str(
-                    seller_id
-                ),
-                "seller_user_id": str(
-                    user_id
-                ),
-            },
-        },
+    enqueue_mock.assert_called_once_with(
+        outbox_id
     )
 
 
@@ -468,6 +458,7 @@ def test_idempotent_business_replay_does_not_publish_duplicate_event() -> None:
     repository.create_business.return_value = (
         business,
         False,
+        None,
     )
 
     client, _ = build_client(
@@ -475,8 +466,8 @@ def test_idempotent_business_replay_does_not_publish_duplicate_event() -> None:
     )
 
     with patch(
-        "app.intake.routes.publish_event"
-    ) as publish_event_mock:
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
 
         response = client.post(
             "/intake/sellers/businesses",
@@ -498,7 +489,49 @@ def test_idempotent_business_replay_does_not_publish_duplicate_event() -> None:
         == 201
     )
 
-    publish_event_mock.assert_not_called()
+    enqueue_mock.assert_not_called()
+
+
+def test_business_persistence_failure_does_not_enqueue() -> None:
+
+    repository = MagicMock()
+    repository.create_business.side_effect = (
+        IntakeRepositoryError("outbox failed")
+    )
+    client, _ = build_client(repository)
+
+    with patch(
+        "app.intake.routes._enqueue_outbox_event"
+    ) as enqueue_mock:
+        response = client.post(
+            "/intake/sellers/businesses",
+            headers={"Idempotency-Key": "failed-request"},
+            json={
+                "business_type": "Service",
+                "industry": "HVAC",
+                "city": "Austin",
+                "state": "Texas",
+            },
+        )
+
+    assert response.status_code == 500
+    enqueue_mock.assert_not_called()
+
+
+def test_enqueue_outbox_event_passes_persisted_id_to_task() -> None:
+
+    event_id = uuid4()
+    task = MagicMock()
+    fake_tasks_module = ModuleType("app.events.tasks")
+    fake_tasks_module.send_outbox_event = task
+
+    with patch.dict(
+        sys.modules,
+        {"app.events.tasks": fake_tasks_module},
+    ):
+        _enqueue_outbox_event(event_id)
+
+    task.delay.assert_called_once_with(str(event_id))
 
 
 def test_create_business_requires_idempotency_key() -> None:
