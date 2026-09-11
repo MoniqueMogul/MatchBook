@@ -32,7 +32,7 @@ def publish_event(
         EventType.MESSAGE_CREATED,
     }:
         celery_app.send_task(
-            "app.notifications.tasks.process_notification_event",
+            "app.notification.tasks.process_notification_event",
             kwargs={
                 "event": message,
             },
