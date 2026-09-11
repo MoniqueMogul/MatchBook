@@ -13,16 +13,20 @@ CELERY_BROKER_URL = os.getenv(
     "amqp://guest:guest@localhost:5672//",
 )
 
-CELERY_RESULT_BACKEND = os.getenv(
-    "MATCHBOOK_CELERY_RESULT_BACKEND",
-    "redis://localhost:6379/1",
-)
+#CELERY_RESULT_BACKEND = os.getenv(
+#    "MATCHBOOK_CELERY_RESULT_BACKEND",
+#    "redis://localhost:6379/1",
+#)
 
 
 celery_app = Celery(
     "matchbook",
     broker=CELERY_BROKER_URL,
-    backend=CELERY_RESULT_BACKEND,
+    #backend=CELERY_RESULT_BACKEND,
+    include=[
+            "app.events.tasks",
+            "app.notification.tasks",
+    ],
 )
 
 
@@ -50,7 +54,7 @@ celery_app.conf.update(
             "queue": "outbox",
         },
 
-        "app.notifications.tasks.process_notification_event": {
+        "app.notification.tasks.process_notification_event": {
             "queue": "notifications",
         },
 
