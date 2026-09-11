@@ -39,7 +39,7 @@ class BuyerPreferencesRead(IntakeModel):
     buyer_id: UUID
 
     target_industries: list[str] | None = None
-    target_locations: TargetLocation | None = None
+    target_locations: list[TargetLocation] | None = None
 
     maximum_purchase_price: Decimal | None = None
 

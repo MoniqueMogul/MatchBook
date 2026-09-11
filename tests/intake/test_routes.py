@@ -109,6 +109,38 @@ def build_buyer_profile_result(
     )
 
 
+def build_buyer_preferences_result(
+    *,
+    buyer_id,
+    target_locations,
+) -> SimpleNamespace:
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    return SimpleNamespace(
+        id=uuid4(),
+        buyer_id=buyer_id,
+        target_industries=["HVAC"],
+        target_locations=target_locations,
+        maximum_purchase_price=500000,
+        minimum_required_sde=100000,
+        preferred_sde=200000,
+        minimum_required_arr=150000,
+        preferred_arr=250000,
+        preferred_owner_hours_per_week=20,
+        required_transition_training_days=30,
+        deal_preference="financing",
+        real_estate_preference=None,
+        minimum_years_in_operation=None,
+        accepts_customer_concentration_above_25_percent=False,
+        preferred_acquisition_timeline="3-6 months",
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def build_business_result(
     *,
     seller_id,
@@ -320,7 +352,7 @@ def test_buyer_readiness_returns_missing_fields() -> None:
             target_industries=[
                 "HVAC"
             ],
-            target_locations={
+            target_locations=[{
                 "provider": "locationiq",
                 "place_id": "test-texas",
                 "display_name": "Texas, United States",
@@ -331,7 +363,7 @@ def test_buyer_readiness_returns_missing_fields() -> None:
                 "state": "Texas",
                 "country": "United States",
                 "country_code": "US",
-            },
+            }],
             maximum_purchase_price=500000,
             minimum_required_sde=100000,
             preferred_sde=200000,
@@ -373,6 +405,86 @@ def test_buyer_readiness_returns_missing_fields() -> None:
     repository.get_buyer_preferences_by_user_id.assert_called_once_with(
         user_id
     )
+
+
+def test_get_buyer_preferences_returns_target_locations_list() -> None:
+    target_locations = [
+        {
+            "provider": "locationiq",
+            "place_id": "calgary",
+            "display_name": "Calgary, Alberta, Canada",
+            "latitude": 51.0447,
+            "longitude": -114.0719,
+            "city": "Calgary",
+            "county": None,
+            "state": "Alberta",
+            "country": "Canada",
+            "country_code": "CA",
+        },
+        {
+            "provider": "locationiq",
+            "place_id": "edmonton",
+            "display_name": "Edmonton, Alberta, Canada",
+            "latitude": 53.5461,
+            "longitude": -113.4938,
+            "city": "Edmonton",
+            "county": None,
+            "state": "Alberta",
+            "country": "Canada",
+            "country_code": "CA",
+        },
+    ]
+    repository = MagicMock()
+    repository.get_buyer_preferences_by_user_id.return_value = (
+        build_buyer_preferences_result(
+            buyer_id=uuid4(),
+            target_locations=target_locations,
+        )
+    )
+
+    client, user_id = build_client(repository)
+    response = client.get("/intake/buyers/preferences")
+
+    assert response.status_code == 200
+    assert response.json()["target_locations"] == target_locations
+    repository.get_buyer_preferences_by_user_id.assert_called_once_with(
+        user_id
+    )
+
+
+def test_put_buyer_preferences_accepts_and_returns_target_locations_list() -> None:
+    target_locations = [{
+        "provider": "locationiq",
+        "place_id": "calgary",
+        "display_name": "Calgary, Alberta, Canada",
+        "latitude": 51.0447,
+        "longitude": -114.0719,
+        "city": "Calgary",
+        "county": None,
+        "state": "Alberta",
+        "country": "Canada",
+        "country_code": "CA",
+    }]
+    repository = MagicMock()
+    repository.upsert_buyer_preferences.return_value = (
+        build_buyer_preferences_result(
+            buyer_id=uuid4(),
+            target_locations=target_locations,
+        )
+    )
+
+    client, user_id = build_client(repository)
+    response = client.put(
+        "/intake/buyers/preferences",
+        json={"target_locations": target_locations},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["target_locations"] == target_locations
+    repository.upsert_buyer_preferences.assert_called_once()
+    call = repository.upsert_buyer_preferences.call_args
+    assert call.args[0] == user_id
+    assert call.args[1].model_dump()["target_locations"] == target_locations
 
 
 def test_create_business_uses_auth_user_and_enqueues_outbox_event() -> None:
