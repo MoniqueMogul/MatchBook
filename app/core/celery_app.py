@@ -30,6 +30,13 @@ celery_app = Celery(
 )
 
 
+celery_app.conf.beat_schedule = {
+    "retry-pending-outbox-events": {
+        "task": "app.events.tasks.retry_pending_outbox_events",
+        "schedule": 60.0,
+    },
+}
+
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",

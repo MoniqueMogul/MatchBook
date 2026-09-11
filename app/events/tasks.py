@@ -115,3 +115,24 @@ def _record_publish_failure(
 
     finally:
         session.close()
+
+
+
+@celery_app.task
+def retry_pending_outbox_events() -> None:
+    session = SessionLocal()
+
+    try:
+        repository = OutboxRepository(session)
+
+        pending_events = repository.list_pending_events(
+            limit=100
+        )
+
+        for event in pending_events:
+            send_outbox_event.delay(
+                str(event.id)
+            )
+
+    finally:
+        session.close()
