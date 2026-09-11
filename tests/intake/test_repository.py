@@ -150,7 +150,7 @@ def test_create_buyer_profile_rolls_back_when_outbox_fails() -> None:
     session.commit.assert_not_called()
 
 
-def test_upsert_buyer_preferences_serializes_target_location() -> None:
+def test_upsert_buyer_preferences_serializes_target_locations_as_list() -> None:
 
     user_id = uuid4()
     buyer_id = uuid4()
@@ -177,7 +177,7 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
     repository.upsert_buyer_preferences(
         user_id,
         BuyerPreferencesUpsert(
-            target_locations={
+            target_locations=[{
                 "provider": "locationiq",
                 "place_id": "test-texas",
                 "display_name": "Texas, United States",
@@ -188,7 +188,7 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
                 "state": "Texas",
                 "country": "United States",
                 "country_code": "US",
-            },
+            }],
             minimum_required_arr=150000,
         ),
     )
@@ -204,7 +204,7 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
 
     assert (
         created.target_locations
-        == {
+        == [{
             "provider": "locationiq",
             "place_id": "test-texas",
             "display_name": "Texas, United States",
@@ -215,7 +215,7 @@ def test_upsert_buyer_preferences_serializes_target_location() -> None:
             "state": "Texas",
             "country": "United States",
             "country_code": "US",
-        }
+        }]
     )
 
     assert (

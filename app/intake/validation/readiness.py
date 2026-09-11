@@ -24,9 +24,9 @@ def buyer_preferences_readiness(
     if not preferences.target_industries:
         missing.append("target_industries")
 
-    if (
-        preferences.target_locations is None
-        or not preferences.target_locations.has_any_value()
+    if not preferences.target_locations or not any(
+        location.has_any_value()
+        for location in preferences.target_locations
     ):
         missing.append("target_locations")
 
