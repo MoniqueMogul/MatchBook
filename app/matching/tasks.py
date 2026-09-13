@@ -8,7 +8,12 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.celery_app import celery_app
+from app.db.db_enum import (
+    EventConsumer,
+    EventType,
+)
 from app.db.session import SessionLocal
+from app.events.repository import OutboxRepository
 
 from app.matching.cache import (
     get_match_cache,
@@ -337,6 +342,47 @@ def _event_uuid(
         ) from exc
 
 
+def _event_id(
+    event: dict[str, Any],
+) -> UUID:
+    """
+    Extract the Outbox event UUID.
+
+    The event_id is required for per-consumer
+    idempotency tracking.
+    """
+
+    raw_event_id = (
+        event.get(
+            "event_id"
+        )
+    )
+
+    if raw_event_id is None:
+        raise ValueError(
+            "Event is missing event_id"
+        )
+
+    try:
+        return UUID(
+            str(
+                raw_event_id
+            )
+        )
+
+    except (
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        raise ValueError(
+            (
+                "Invalid event_id: "
+                f"{raw_event_id}"
+            )
+        ) from exc
+
+
 # ============================================================
 # EVENT-DRIVEN MATCHING TASK
 # ============================================================
@@ -375,20 +421,67 @@ def process_matching_event(
             -> validate/load the business from PostgreSQL
             -> recalculate matches for match-ready buyers
 
-    Event payloads are used only to identify the entity.
-    PostgreSQL remains the source of truth for matching data.
+    Matching uses per-consumer ProcessedEvent records
+    for idempotency.
+
+    Matching writes and the MATCHING processed marker
+    are committed together in one transaction.
+
+    PostgreSQL remains the source of truth.
     """
 
-    event_type = str(
-        event.get(
-            "event_type",
-            "",
+    session = SessionLocal()
+
+    try:
+        event_id = _event_id(
+            event
         )
-    ).upper()
 
-    with SessionLocal() as session:
+        outbox_repository = (
+            OutboxRepository(
+                session
+            )
+        )
 
-        if event_type == "BUYER_CREATED":
+        # Ensure the source Outbox event exists before
+        # performing Matching work.
+        outbox_repository.require_event(
+            event_id
+        )
+
+        # Matching has its own processed state.
+        # Processing by another consumer does not prevent
+        # Matching from handling this event.
+        if outbox_repository.is_processed(
+            event_id=event_id,
+            consumer=EventConsumer.MATCHING,
+        ):
+            logger.info(
+                (
+                    "Skipping already processed "
+                    "matching event_id=%s"
+                ),
+                event_id,
+            )
+
+            return {
+                "status": "already_processed",
+                "event_id": str(
+                    event_id
+                ),
+            }
+
+        event_type = EventType(
+            event[
+                "event_type"
+            ]
+        )
+
+        # ====================================================
+        # BUYER CREATED
+        # ====================================================
+
+        if event_type == EventType.BUYER_CREATED:
             buyer_id = _event_uuid(
                 event,
                 "buyer_id",
@@ -398,25 +491,17 @@ def process_matching_event(
                 recalculate_matches_for_buyer(
                     session,
                     buyer_id,
+                    commit=False,
                 )
             )
 
-            logger.info(
-                (
-                    "Processed BUYER_CREATED "
-                    "for buyer_id=%s; "
-                    "matches=%s"
-                ),
-                buyer_id,
-                len(
-                    ranked_matches
-                ),
-            )
-
-            return {
+            result = {
                 "status": "processed",
+                "event_id": str(
+                    event_id
+                ),
                 "event_type": (
-                    "BUYER_CREATED"
+                    EventType.BUYER_CREATED.value
                 ),
                 "buyer_id": str(
                     buyer_id
@@ -426,7 +511,14 @@ def process_matching_event(
                 ),
             }
 
-        if event_type == "BUSINESS_CREATED":
+        # ====================================================
+        # BUSINESS CREATED
+        # ====================================================
+
+        elif (
+            event_type
+            == EventType.BUSINESS_CREATED
+        ):
             business_id = _event_uuid(
                 event,
                 "business_id",
@@ -436,6 +528,7 @@ def process_matching_event(
                 recalculate_matches_for_business(
                     session,
                     business_id,
+                    commit=False,
                 )
             )
 
@@ -447,23 +540,13 @@ def process_matching_event(
                 in buyer_results.values()
             )
 
-            logger.info(
-                (
-                    "Processed BUSINESS_CREATED "
-                    "for business_id=%s; "
-                    "buyers=%s; matches=%s"
-                ),
-                business_id,
-                len(
-                    buyer_results
-                ),
-                total_matches,
-            )
-
-            return {
+            result = {
                 "status": "processed",
+                "event_id": str(
+                    event_id
+                ),
                 "event_type": (
-                    "BUSINESS_CREATED"
+                    EventType.BUSINESS_CREATED.value
                 ),
                 "business_id": str(
                     business_id
@@ -476,18 +559,51 @@ def process_matching_event(
                 ),
             }
 
-    logger.info(
-        (
-            "Ignoring unsupported "
-            "matching event_type=%s"
-        ),
-        event_type,
-    )
+        else:
+            raise ValueError(
+                (
+                    "Unsupported matching event: "
+                    f"{event_type.value}"
+                )
+            )
 
-    return {
-        "status": "ignored",
-        "event_type": event_type,
-    }
+        # ====================================================
+        # MARK MATCHING CONSUMER PROCESSED
+        # ====================================================
+
+        outbox_repository.mark_processed(
+            event_id=event_id,
+            consumer=EventConsumer.MATCHING,
+        )
+
+        # Matching writes and ProcessedEvent are committed
+        # atomically in the same transaction.
+        session.commit()
+
+        logger.info(
+            (
+                "Successfully processed matching "
+                "event_id=%s event_type=%s"
+            ),
+            event_id,
+            event_type.value,
+        )
+
+        return result
+
+    except Exception:
+        # If matching or processed-event tracking fails,
+        # neither should be committed.
+        session.rollback()
+
+        logger.exception(
+            "Matching event processing failed"
+        )
+
+        raise
+
+    finally:
+        session.close()
 
 
 # ============================================================

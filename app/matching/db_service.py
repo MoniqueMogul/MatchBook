@@ -101,6 +101,7 @@ def recalculate_matches_for_buyer(
     top_n: int = (
         DEFAULT_TOP_N_MATCHES
     ),
+    commit: bool = True,
 ) -> list[RankedMatch]:
     """
     Run the database-backed V1 Matching Engine
@@ -109,22 +110,20 @@ def recalculate_matches_for_buyer(
     Workflow:
 
         buyer_id
-            ↓
+            ->
         BuyerPreferences
-            ↓
+            ->
         Database hard-filtered candidate businesses
-            ↓
+            ->
         Database model -> Matching input mapping
-            ↓
+            ->
         Deterministic FIT scoring
-            ↓
+            ->
         Threshold filtering
-            ↓
+            ->
         Top-N ranking
-            ↓
+            ->
         Persist Match records
-            ↓
-        Commit transaction
 
     Hard eligibility is intentionally handled by
     get_candidate_businesses() at the database layer.
@@ -134,6 +133,17 @@ def recalculate_matches_for_buyer(
     Redis is intentionally not required here.
     Cache integration remains outside the core
     database transaction.
+
+    Transaction ownership:
+
+    - commit=True:
+      This function commits successful matching work and
+      rolls back if an exception occurs.
+
+    - commit=False:
+      The caller owns the transaction. This is used by
+      event consumers so matching writes and processed-event
+      tracking can be committed atomically.
     """
 
     if not (
@@ -225,13 +235,21 @@ def recalculate_matches_for_buyer(
                 ranked_match.evaluation,
             )
 
-        # Transaction belongs to this orchestration layer.
-        session.commit()
+        # When called directly by the API/service layer,
+        # preserve the existing behavior and commit here.
+        #
+        # Event consumers pass commit=False so matching
+        # writes and ProcessedEvent can share one transaction.
+        if commit:
+            session.commit()
 
         return ranked_matches
 
     except Exception as exc:
-        session.rollback()
+        # If this function owns the transaction, it also owns
+        # rollback. Otherwise the caller is responsible for it.
+        if commit:
+            session.rollback()
 
         logger.exception(
             (
@@ -259,6 +277,7 @@ def recalculate_matches_for_buyer(
             )
         ) from exc
 
+
 def recalculate_matches_for_business(
     session: Session,
     business_id: UUID,
@@ -269,16 +288,28 @@ def recalculate_matches_for_business(
     top_n: int = (
         DEFAULT_TOP_N_MATCHES
     ),
+    commit: bool = True,
 ) -> dict[UUID, list[RankedMatch]]:
     """
     Recalculate matching for all match-ready buyers
     when a business is created.
 
-    Because a new business can affect each buyer's
-    top-N ranking, the existing buyer-centric matching
-    workflow is reused.
+    Because a newly created business can affect each
+    buyer's top-N ranking, the existing buyer-centric
+    matching workflow is reused.
 
     The business is validated before recalculation begins.
+
+    Transaction ownership:
+
+    - commit=True:
+      All affected buyers are recalculated and committed
+      together after successful completion.
+
+    - commit=False:
+      The caller owns the transaction. This allows an event
+      consumer to persist matching changes and its
+      ProcessedEvent marker in one atomic transaction.
     """
 
     try:
@@ -322,12 +353,24 @@ def recalculate_matches_for_business(
                         minimum_threshold
                     ),
                     top_n=top_n,
+                    commit=False,
                 )
             )
+
+        # Commit all buyer recalculations together only when
+        # this function owns the transaction.
+        if commit:
+            session.commit()
 
         return results
 
     except Exception as exc:
+        # If this function owns the transaction, it also owns
+        # rollback. Event consumers using commit=False handle
+        # rollback at the task/orchestration layer.
+        if commit:
+            session.rollback()
+
         logger.exception(
             (
                 "Business-triggered matching failed "
@@ -342,91 +385,6 @@ def recalculate_matches_for_business(
                 ValueError,
                 MatchingDataIncompleteError,
                 MatchingDataNotFoundError,
-                MatchingDatabaseServiceError,
-            ),
-        ):
-            raise
-
-        raise MatchingDatabaseServiceError(
-            (
-                "Unable to recalculate matches "
-                f"for business_id={business_id}"
-            )
-        ) from exc
-def recalculate_matches_for_business(
-    session: Session,
-    business_id: UUID,
-    *,
-    minimum_threshold: float = (
-        DEFAULT_MIN_FIT_THRESHOLD
-    ),
-    top_n: int = (
-        DEFAULT_TOP_N_MATCHES
-    ),
-) -> dict[UUID, list[RankedMatch]]:
-    """
-    Recalculate matching for all match-ready buyers
-    when a new business is created.
-
-    A newly created business can affect each buyer's
-    top-N ranking, so the buyer-centric matching flow
-    is intentionally reused.
-
-    The supplied business_id is validated first so
-    invalid events fail early.
-    """
-
-    try:
-        # Validate that the business exists.
-        from app.matching.repository import (
-            get_business,
-            get_match_ready_buyer_ids,
-        )
-
-        get_business(
-            session,
-            business_id,
-        )
-
-        buyer_ids = (
-            get_match_ready_buyer_ids(
-                session
-            )
-        )
-
-        results: dict[
-            UUID,
-            list[RankedMatch],
-        ] = {}
-
-        for buyer_id in buyer_ids:
-            results[buyer_id] = (
-                recalculate_matches_for_buyer(
-                    session,
-                    buyer_id,
-                    minimum_threshold=(
-                        minimum_threshold
-                    ),
-                    top_n=top_n,
-                )
-            )
-
-        return results
-
-    except Exception as exc:
-        logger.exception(
-            (
-                "Business-triggered matching failed "
-                "for business_id=%s"
-            ),
-            business_id,
-        )
-
-        if isinstance(
-            exc,
-            (
-                ValueError,
-                MatchingDataIncompleteError,
                 MatchingDatabaseServiceError,
             ),
         ):
