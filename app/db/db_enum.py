@@ -130,4 +130,20 @@ class DeclarationStatus(str, Enum):
 class OutboxStatus(str, Enum):
     PENDING = "pending"
     PUBLISHED = "published"
-    PROCESSED = "processed"
+
+class EventConsumer(str, Enum):
+    MATCHING = "matching"
+    NOTIFICATION = "notification"
+    CHAT = "chat"
+    VERIFICATION = "verification"
+
+
+class BusinessType(str, Enum):
+    SERVICE = "service"
+    RETAIL = "retail"
+    ECOMMERCE = "ecommerce"
+    FRANCHISE = "franchise"
+    ROUTE_BASED = "route_based"
+    MANUFACTURING = "manufacturing"
+    PROFESSIONAL_SERVICES = "professional_services"
+    SUBSCRIPTION = "subscription"

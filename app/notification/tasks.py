@@ -4,7 +4,7 @@ from uuid import UUID
 
 from app.core.celery_app import celery_app
 from app.db.database import SessionLocal
-from app.db.db_enum import OutboxStatus
+from app.db.db_enum import EventConsumer
 from app.events.repository import OutboxRepository
 from app.notification.handlers import handle_notification_event
 from app.notification.repository import NotificationRepository
@@ -20,15 +20,6 @@ from app.notification.repository import NotificationRepository
 def process_notification_event(
     event: dict,
 ) -> None:
-    """
-    Consume an event and create the corresponding notification.
-
-    This worker owns the transaction.
-
-    If the event has already been processed, it returns without
-    creating another notification.
-    """
-
     session = SessionLocal()
 
     try:
@@ -40,36 +31,30 @@ def process_notification_event(
             session
         )
 
-        outbox_event = outbox_repository.require_event(
-            UUID(event["event_id"])
+        event_id = UUID(
+            event["event_id"]
         )
 
-        # ----------------------------------------------------
-        # Consumer idempotency
-        # ----------------------------------------------------
+        outbox_repository.require_event(
+            event_id
+        )
 
-        if outbox_event.status == OutboxStatus.PROCESSED:
+        if outbox_repository.is_processed(
+            event_id=event_id,
+            consumer=EventConsumer.NOTIFICATION,
+        ):
             return
-
-        # ----------------------------------------------------
-        # Notification business logic
-        # ----------------------------------------------------
 
         handle_notification_event(
             event=event,
             repository=notification_repository,
         )
 
-        # ----------------------------------------------------
-        # Record successful processing
-        # ----------------------------------------------------
-
         outbox_repository.mark_processed(
-            outbox_event
+            event_id=event_id,
+            consumer=EventConsumer.NOTIFICATION,
         )
 
-        # Notification creation + processed state are committed
-        # together.
         session.commit()
 
     except Exception:

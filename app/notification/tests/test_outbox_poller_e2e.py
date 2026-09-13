@@ -2,7 +2,7 @@ from time import monotonic, sleep
 from uuid import uuid4
 
 from app.db.database import SessionLocal
-from app.db.db_enum import EventType, OutboxStatus
+from app.db.db_enum import EventType, OutboxStatus, EventConsumer
 from app.db.db_model import User
 from app.events.payload_schema import MatchCreatedPayload
 from app.events.repository import OutboxRepository
@@ -93,7 +93,7 @@ def test_pending_outbox_event_is_retried_and_processed():
             )
 
             if (
-                current_event.status == OutboxStatus.PROCESSED
+                current_event.status == OutboxStatus.PUBLISHED
                 and notification is not None
             ):
                 break
@@ -106,9 +106,13 @@ def test_pending_outbox_event_is_retried_and_processed():
             event_id
         )
 
-        assert current_event.status == OutboxStatus.PROCESSED
+        assert current_event.status == OutboxStatus.PUBLISHED
+
+        assert repository.is_processed(
+            event_id=current_event.id,
+            consumer=EventConsumer.NOTIFICATION,
+        )
         assert current_event.published_at is not None
-        assert current_event.processed_at is not None
         assert notification is not None
 
     finally:

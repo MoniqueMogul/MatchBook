@@ -24,8 +24,9 @@ celery_app = Celery(
     broker=CELERY_BROKER_URL,
     #backend=CELERY_RESULT_BACKEND,
     include=[
-            "app.events.tasks",
-            "app.notification.tasks",
+        "app.events.tasks",
+        "app.notification.tasks",
+        "app.chat.tasks",
     ],
 )
 
@@ -62,15 +63,15 @@ celery_app.conf.update(
         },
 
         "app.events.tasks.retry_pending_outbox_events": {
-                "queue": "outbox",
+            "queue": "outbox",
         },
 
         "app.notification.tasks.process_notification_event": {
             "queue": "notifications",
         },
 
-        "app.matching.tasks.process_matching_event": {
-            "queue": "matching",
+        "app.chat.tasks.process_chat_event": {
+            "queue": "chat",
         },
-    },
+    }
 )

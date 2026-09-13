@@ -12,29 +12,13 @@ from app.events.router import publish_event
 @celery_app.task(
     autoretry_for=(Exception,),
     retry_backoff=True,
-    retry_kwargs={
-        "max_retries": 5,
-    },
+    retry_kwargs={"max_retries": 5},
 )
-def send_outbox_event(
-    event_id: str,
-) -> None:
-    """
-    Publish a pending Outbox event to the appropriate
-    downstream Celery consumer.
-
-    The Outbox event remains PENDING when publishing fails.
-
-    It is marked PUBLISHED only after Celery accepts
-    the downstream task.
-    """
-
+def send_outbox_event(event_id: str) -> None:
     session = SessionLocal()
 
     try:
-        repository = OutboxRepository(
-            session
-        )
+        repository = OutboxRepository(session)
 
         event = repository.require_event(
             UUID(event_id)
@@ -43,7 +27,9 @@ def send_outbox_event(
         if event.status != OutboxStatus.PENDING:
             return
 
-        event_type = EventType(event.event_type)
+        event_type = EventType(
+            event.event_type
+        )
 
         message = {
             "event_id": str(event.id),
@@ -59,9 +45,7 @@ def send_outbox_event(
             message=message,
         )
 
-        repository.mark_published(
-            event
-        )
+        repository.mark_published(event)
 
         session.commit()
 

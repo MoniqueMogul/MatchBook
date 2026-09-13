@@ -5,7 +5,7 @@ from app.db.database import SessionLocal
 from app.db.db_enum import (
     EventType,
     NotificationType,
-    OutboxStatus,
+    OutboxStatus, EventConsumer,
 )
 from app.db.db_model import User
 from app.events.payload_schema import MatchCreatedPayload
@@ -100,7 +100,7 @@ def test_outbox_to_notification_e2e():
 
             if (
                 current_event.status
-                == OutboxStatus.PROCESSED
+                == OutboxStatus.PUBLISHED
                 and notification is not None
             ):
                 break
@@ -114,9 +114,13 @@ def test_outbox_to_notification_e2e():
             event_id
         )
 
-        assert current_event.status == OutboxStatus.PROCESSED
+        assert current_event.status == OutboxStatus.PUBLISHED
+
+        assert outbox_repository.is_processed(
+            event_id=current_event.id,
+            consumer=EventConsumer.NOTIFICATION,
+        )
         assert current_event.published_at is not None
-        assert current_event.processed_at is not None
 
         # 6. Verify notification was really persisted.
         assert notification is not None
