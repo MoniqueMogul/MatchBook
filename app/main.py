@@ -1,20 +1,28 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException
 
 from app.db.session import (
     check_database_connection,
 )
-
 from app.intake.routes import (
     router as intake_router,
 )
-
 from app.matching.routes import (
     router as matching_router,
 )
-
+from app.monitoring.logging_config import (
+    configure_logging,
+)
+from app.monitoring.middleware import (
+    RequestLoggingMiddleware,
+)
 from app.notification.routes import (
     router as notification_router,
 )
+
+
+configure_logging()
 
 
 app = FastAPI(
@@ -24,6 +32,11 @@ app = FastAPI(
         "AI-powered business matchmaking platform."
     ),
     version="0.1.0",
+)
+
+
+app.add_middleware(
+    RequestLoggingMiddleware
 )
 
 
@@ -77,7 +90,7 @@ def database_health_check() -> dict[str, str]:
 
 
 # ============================================================
-# INTAKE ROUTER
+# ROUTERS
 # ============================================================
 
 
@@ -85,21 +98,9 @@ app.include_router(
     intake_router,
 )
 
-
-# ============================================================
-# MATCHING ROUTER
-# ============================================================
-
-
 app.include_router(
     matching_router,
 )
-
-
-# ============================================================
-# NOTIFICATION ROUTER
-# ============================================================
-
 
 app.include_router(
     notification_router,
