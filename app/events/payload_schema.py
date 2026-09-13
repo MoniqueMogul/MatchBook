@@ -41,6 +41,7 @@ class VerificationCompletedPayload(BaseModel):
 class NdaCompletedPayload(BaseModel):
     user_id: UUID
     nda_id: UUID
+    match_id: UUID
 
 
 class DocumentUploadedPayload(BaseModel):
@@ -51,3 +52,4 @@ class DocumentUploadedPayload(BaseModel):
 class MessageCreatedPayload(BaseModel):
     recipient_user_id: UUID
     conversation_id: UUID
+    message_id: UUID

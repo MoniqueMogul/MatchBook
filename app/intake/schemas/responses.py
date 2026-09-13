@@ -7,7 +7,7 @@ from app.db.db_enum import (
     BuyerType,
     DealPreference,
     RealEstatePreference,
-    VerificationStatus,
+    VerificationStatus, BusinessType,
 )
 from app.intake.schemas.common import IntakeModel, TargetLocation
 
@@ -82,7 +82,7 @@ class BusinessRead(IntakeModel):
     legal_name: str | None = None
     dba: str | None = None
 
-    business_type: str
+    business_type: BusinessType
     industry: str
 
     city: str
