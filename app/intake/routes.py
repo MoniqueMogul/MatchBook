@@ -1,7 +1,5 @@
 from typing import NoReturn
 from uuid import UUID
-from app.db.db_enum import EventType
-from app.events.router import publish_event
 
 
 from fastapi import (
@@ -9,6 +7,7 @@ from fastapi import (
     Depends,
     Header,
     HTTPException,
+    Query,
     status,
 )
 
@@ -18,6 +17,12 @@ from app.auth.dependencies import (
 from app.intake.dependencies import (
     get_intake_repository,
 )
+from app.intake.locationiq import (
+    LocationAutocompleteConfigurationError,
+    LocationAutocompleteProviderError,
+    autocomplete_locations,
+)
+from app.intake.schemas.common import TargetLocation
 from app.intake.repository import (
     IntakeConflictError,
     IntakeNotFoundError,
@@ -55,6 +60,38 @@ router = APIRouter(
     prefix="/intake",
     tags=["intake"],
 )
+
+
+def _enqueue_outbox_event(
+    event_id: UUID,
+) -> None:
+    """Load the worker lazily so routes remain config-independent."""
+
+    from app.events.tasks import send_outbox_event
+
+    send_outbox_event.delay(
+        str(event_id)
+    )
+
+
+@router.get("/locations/autocomplete", response_model=list[TargetLocation])
+def get_location_autocomplete(
+    q: str = Query(..., min_length=3, max_length=200),
+    limit: int = Query(8, ge=1, le=20),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> list[TargetLocation]:
+    try:
+        return autocomplete_locations(q, limit)
+    except LocationAutocompleteConfigurationError:
+        raise HTTPException(
+            status_code=503,
+            detail="Location autocomplete is not configured.",
+        ) from None
+    except LocationAutocompleteProviderError:
+        raise HTTPException(
+            status_code=502,
+            detail="Location autocomplete provider is unavailable.",
+        ) from None
 
 
 def _raise_http_error(
@@ -126,7 +163,7 @@ def create_buyer_profile(
 ) -> BuyerProfileRead:
 
     try:
-        profile = (
+        profile, outbox_event = (
             repository.create_buyer_profile(
                 current_user_id,
                 payload,
@@ -138,25 +175,8 @@ def create_buyer_profile(
             exc
         )
 
-    publish_event(
-        event_type=EventType.BUYER_CREATED,
-        message={
-            "event_type": (
-                EventType.BUYER_CREATED.value
-            ),
-            "entity_type": "buyer",
-            "entity_id": str(
-                profile.id
-            ),
-            "payload": {
-                "buyer_id": str(
-                    profile.id
-                ),
-                "user_id": str(
-                    profile.user_id
-                ),
-            },
-        },
+    _enqueue_outbox_event(
+        outbox_event.id
     )
 
     return BuyerProfileRead.model_validate(
@@ -447,6 +467,7 @@ def create_business(
         (
             business,
             was_created,
+            outbox_event,
         ) = repository.create_business(
             current_user_id,
             payload,
@@ -459,32 +480,8 @@ def create_business(
         )
 
     if was_created:
-        publish_event(
-            event_type=(
-                EventType.BUSINESS_CREATED
-            ),
-            message={
-                "event_type": (
-                    EventType
-                    .BUSINESS_CREATED
-                    .value
-                ),
-                "entity_type": "business",
-                "entity_id": str(
-                    business.id
-                ),
-                "payload": {
-                    "business_id": str(
-                        business.id
-                    ),
-                    "seller_id": str(
-                        business.seller_id
-                    ),
-                    "seller_user_id": str(
-                        current_user_id
-                    ),
-                },
-            },
+        _enqueue_outbox_event(
+            outbox_event.id
         )
 
     return BusinessRead.model_validate(

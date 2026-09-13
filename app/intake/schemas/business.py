@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from pydantic import Field, field_validator
 
-from app.db.db_enum import DealPreference
+from app.db.db_enum import DealPreference, BusinessType
 from app.intake.schemas.common import IntakeModel
 
 
@@ -36,10 +36,7 @@ class BusinessCreate(IntakeModel):
         max_length=255,
     )
 
-    business_type: str = Field(
-        min_length=1,
-        max_length=150,
-    )
+    business_type: BusinessType
 
     industry: str = Field(
         min_length=1,
@@ -172,11 +169,7 @@ class BusinessUpdate(IntakeModel):
         max_length=255,
     )
 
-    business_type: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=150,
-    )
+    business_type: BusinessType | None
 
     industry: str | None = Field(
         default=None,

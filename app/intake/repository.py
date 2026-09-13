@@ -8,9 +8,17 @@ from app.db.db_model import (
     Business,
     BuyerPreferences,
     BuyerProfile,
+    OutboxEvent,
     SellerProfile,
     User,
 )
+from app.db.db_enum import EventType
+from app.events.payload_schema import (
+    BusinessCreatedPayload,
+    BuyerCreatedPayload,
+)
+from app.events.repository import OutboxRepository
+from app.events.schema import OutboxEventCreate
 from app.intake.schemas.business import (
     BusinessCreate,
     BusinessUpdate,
@@ -106,7 +114,7 @@ class IntakeRepository:
         self,
         user_id: UUID,
         data: BuyerProfileCreate,
-    ) -> BuyerProfile:
+    ) -> tuple[BuyerProfile, OutboxEvent]:
 
         self._require_user(user_id)
 
@@ -126,9 +134,50 @@ class IntakeRepository:
 
         self.session.add(profile)
 
-        self._commit_and_refresh(profile)
+        try:
+            self.session.flush()
 
-        return profile
+            event_payload = BuyerCreatedPayload(
+                buyer_id=profile.id,
+                user_id=profile.user_id,
+            )
+
+            outbox_event = OutboxRepository(
+                self.session
+            ).create_event(
+                OutboxEventCreate(
+                    idempotency_key=(
+                        f"buyer_created:{profile.id}"
+                    ),
+                    event_type=EventType.BUYER_CREATED,
+                    entity_type="buyer",
+                    entity_id=profile.id,
+                    payload=event_payload.model_dump(
+                        mode="json"
+                    ),
+                )
+            )
+
+            self.session.commit()
+
+        except IntegrityError as exc:
+            self.session.rollback()
+
+            raise IntakeConflictError(
+                "Database constraints prevented the Intake write."
+            ) from exc
+
+        except Exception as exc:
+            self.session.rollback()
+
+            raise IntakeRepositoryError(
+                "Buyer profile and event could not be persisted."
+            ) from exc
+
+        self.session.refresh(profile)
+        self.session.refresh(outbox_event)
+
+        return profile, outbox_event
 
     def update_buyer_profile(
         self,
@@ -343,7 +392,7 @@ class IntakeRepository:
         seller_user_id: UUID,
         data: BusinessCreate,
         idempotency_key: str,
-    ) -> tuple[Business, bool]:
+    ) -> tuple[Business, bool, OutboxEvent | None]:
 
         seller = (
             self.get_seller_profile_by_user_id(
@@ -357,9 +406,11 @@ class IntakeRepository:
                 "creating a business."
             )
 
+        seller_id = seller.id
+
         existing = (
             self._get_business_by_idempotency_key(
-                seller.id,
+                seller_id,
                 idempotency_key,
             )
         )
@@ -368,10 +419,11 @@ class IntakeRepository:
             return (
                 existing,
                 False,
+                None,
             )
 
         business = Business(
-            seller_id=seller.id,
+            seller_id=seller_id,
             idempotency_key=idempotency_key,
             **data.model_dump(),
         )
@@ -381,6 +433,30 @@ class IntakeRepository:
         )
 
         try:
+            self.session.flush()
+
+            event_payload = BusinessCreatedPayload(
+                business_id=business.id,
+                seller_id=business.seller_id,
+                seller_user_id=seller_user_id,
+            )
+
+            outbox_event = OutboxRepository(
+                self.session
+            ).create_event(
+                OutboxEventCreate(
+                    idempotency_key=(
+                        f"business_created:{business.id}"
+                    ),
+                    event_type=EventType.BUSINESS_CREATED,
+                    entity_type="business",
+                    entity_id=business.id,
+                    payload=event_payload.model_dump(
+                        mode="json"
+                    ),
+                )
+            )
+
             self.session.commit()
 
         except IntegrityError as exc:
@@ -391,7 +467,7 @@ class IntakeRepository:
             # SELECT and COMMIT.
             existing = (
                 self._get_business_by_idempotency_key(
-                    seller.id,
+                    seller_id,
                     idempotency_key,
                 )
             )
@@ -400,6 +476,7 @@ class IntakeRepository:
                 return (
                     existing,
                     False,
+                    None,
                 )
 
             raise IntakeConflictError(
@@ -407,13 +484,24 @@ class IntakeRepository:
                 "the business from being created."
             ) from exc
 
+        except Exception as exc:
+            self.session.rollback()
+
+            raise IntakeRepositoryError(
+                "Business and event could not be persisted."
+            ) from exc
+
         self.session.refresh(
             business
+        )
+        self.session.refresh(
+            outbox_event
         )
 
         return (
             business,
             True,
+            outbox_event,
         )
 
     def get_business_for_seller(

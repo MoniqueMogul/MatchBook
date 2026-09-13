@@ -12,6 +12,10 @@ from app.matching.routes import (
     router as matching_router,
 )
 
+from app.notification.routes import (
+    router as notification_router,
+)
+
 
 app = FastAPI(
     title="MatchBook API",
@@ -78,7 +82,7 @@ def database_health_check() -> dict[str, str]:
 
 
 app.include_router(
-    intake_router
+    intake_router,
 )
 
 
@@ -88,5 +92,15 @@ app.include_router(
 
 
 app.include_router(
-    matching_router
+    matching_router,
+)
+
+
+# ============================================================
+# NOTIFICATION ROUTER
+# ============================================================
+
+
+app.include_router(
+    notification_router,
 )

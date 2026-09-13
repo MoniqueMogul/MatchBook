@@ -34,7 +34,7 @@ from app.db.db_enum import (
     NotificationType,
     EventType,
     DeclarationStatus,
-    OutboxStatus
+    OutboxStatus, EventConsumer, BusinessType
 )
 
 
@@ -781,7 +781,7 @@ class Business(Base):
         nullable=True,
     )
 
-    business_type: Mapped[str] = mapped_column(
+    business_type: Mapped[BusinessType] = mapped_column(
         String(150),
         nullable=False,
     )
@@ -1972,6 +1972,46 @@ class OutboxEvent(Base):
         DateTime(timezone=True),
         nullable=True,
         index=True,
+    )
+
+
+class ProcessedEvent(Base):
+    __tablename__ = "processed_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    event_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "outbox_events.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    consumer: Mapped[EventConsumer] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id",
+            "consumer",
+            name="uq_processed_event_consumer",
+        ),
     )
 
 

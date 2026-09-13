@@ -7,7 +7,7 @@ from app.db.db_enum import (
     BuyerType,
     DealPreference,
     RealEstatePreference,
-    VerificationStatus,
+    VerificationStatus, BusinessType,
 )
 from app.intake.schemas.common import IntakeModel, TargetLocation
 
@@ -39,7 +39,7 @@ class BuyerPreferencesRead(IntakeModel):
     buyer_id: UUID
 
     target_industries: list[str] | None = None
-    target_locations: TargetLocation | None = None
+    target_locations: list[TargetLocation] | None = None
 
     maximum_purchase_price: Decimal | None = None
 
@@ -82,7 +82,7 @@ class BusinessRead(IntakeModel):
     legal_name: str | None = None
     dba: str | None = None
 
-    business_type: str
+    business_type: BusinessType
     industry: str
 
     city: str

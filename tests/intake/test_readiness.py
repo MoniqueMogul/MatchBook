@@ -10,9 +10,18 @@ def test_complete_buyer_preferences_are_matching_ready() -> None:
 
     preferences = BuyerPreferencesUpsert(
         target_industries=["HVAC"],
-        target_locations={
+        target_locations=[{
+            "provider": "locationiq",
+            "place_id": "test-texas",
+            "display_name": "Texas, United States",
+            "latitude": 31.0,
+            "longitude": -100.0,
+            "city": None,
+            "county": None,
             "state": "Texas",
-        },
+            "country": "United States",
+            "country_code": "US",
+        }],
         maximum_purchase_price=500000,
         minimum_required_sde=100000,
         preferred_sde=200000,
@@ -53,9 +62,18 @@ def test_false_customer_concentration_preference_counts_as_answered() -> None:
 
     preferences = BuyerPreferencesUpsert(
         target_industries=["HVAC"],
-        target_locations={
+        target_locations=[{
+            "provider": "locationiq",
+            "place_id": "test-texas",
+            "display_name": "Texas, United States",
+            "latitude": 31.0,
+            "longitude": -100.0,
+            "city": None,
+            "county": None,
             "state": "Texas",
-        },
+            "country": "United States",
+            "country_code": "US",
+        }],
         maximum_purchase_price=500000,
         minimum_required_sde=100000,
         preferred_sde=200000,
@@ -77,9 +95,18 @@ def test_new_matching_dimensions_are_required_for_buyer_readiness() -> None:
 
     preferences = BuyerPreferencesUpsert(
         target_industries=["HVAC"],
-        target_locations={
+        target_locations=[{
+            "provider": "locationiq",
+            "place_id": "test-texas",
+            "display_name": "Texas, United States",
+            "latitude": 31.0,
+            "longitude": -100.0,
+            "city": None,
+            "county": None,
             "state": "Texas",
-        },
+            "country": "United States",
+            "country_code": "US",
+        }],
         maximum_purchase_price=500000,
         minimum_required_sde=100000,
         preferred_sde=200000,
@@ -104,6 +131,17 @@ def test_new_matching_dimensions_are_required_for_buyer_readiness() -> None:
         "preferred_acquisition_timeline"
         in result.missing_fields
     )
+
+
+def test_empty_target_locations_are_missing_for_buyer_readiness() -> None:
+    preferences = BuyerPreferencesUpsert(
+        target_industries=["HVAC"],
+        target_locations=[],
+    )
+
+    result = buyer_preferences_readiness(preferences)
+
+    assert "target_locations" in result.missing_fields
 
 
 def test_complete_business_is_matching_ready() -> None:

@@ -6,8 +6,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.db_enum import OutboxStatus
-from app.db.db_model import OutboxEvent
+from app.db.db_enum import OutboxStatus, EventConsumer
+from app.db.db_model import OutboxEvent, ProcessedEvent
 from app.events.schema import OutboxEventCreate
 
 
@@ -156,22 +156,34 @@ class OutboxRepository:
 
         return event
 
-    def mark_processed(
-        self,
-        event: OutboxEvent,
-    ) -> OutboxEvent:
-
-        event.status = OutboxStatus.PROCESSED
-
-        event.processed_at = datetime.now(
-            timezone.utc
+    def is_processed(
+            self,
+            *,
+            event_id: UUID,
+            consumer: EventConsumer,
+    ) -> bool:
+        statement = select(ProcessedEvent.id).where(
+            ProcessedEvent.event_id == event_id,
+            ProcessedEvent.consumer == consumer,
         )
 
-        event.last_error = None
+        return self.session.scalar(statement) is not None
 
+    def mark_processed(
+            self,
+            *,
+            event_id: UUID,
+            consumer: EventConsumer,
+    ) -> ProcessedEvent:
+        processed_event = ProcessedEvent(
+            event_id=event_id,
+            consumer=consumer,
+        )
+
+        self.session.add(processed_event)
         self.session.flush()
 
-        return event
+        return processed_event
 
     def mark_publish_failed(
         self,
@@ -186,3 +198,4 @@ class OutboxRepository:
         self.session.flush()
 
         return event
+
