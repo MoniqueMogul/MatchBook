@@ -6,9 +6,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.db_enum import OutboxStatus
-from app.db.db_model import OutboxEvent
+from app.db.db_enum import OutboxStatus, EventConsumer
+from app.db.db_model import OutboxEvent, ProcessedEvent
 from app.events.schema import OutboxEventCreate
+from app.events.failure import OutboxFailure
 
 
 class OutboxRepositoryError(Exception):
@@ -32,7 +33,7 @@ class OutboxRepository:
     It deliberately does NOT commit or rollback.
 
     Transaction ownership belongs to the calling
-    service or worker.
+    services or worker.
     """
 
     def __init__(
@@ -156,33 +157,48 @@ class OutboxRepository:
 
         return event
 
-    def mark_processed(
-        self,
-        event: OutboxEvent,
-    ) -> OutboxEvent:
-
-        event.status = OutboxStatus.PROCESSED
-
-        event.processed_at = datetime.now(
-            timezone.utc
+    def is_processed(
+            self,
+            *,
+            event_id: UUID,
+            consumer: EventConsumer,
+    ) -> bool:
+        statement = select(ProcessedEvent.id).where(
+            ProcessedEvent.event_id == event_id,
+            ProcessedEvent.consumer == consumer,
         )
 
-        event.last_error = None
+        return self.session.scalar(statement) is not None
 
+    def mark_processed(
+            self,
+            *,
+            event_id: UUID,
+            consumer: EventConsumer,
+    ) -> ProcessedEvent:
+        processed_event = ProcessedEvent(
+            event_id=event_id,
+            consumer=consumer,
+        )
+
+        self.session.add(processed_event)
         self.session.flush()
 
-        return event
+        return processed_event
 
     def mark_publish_failed(
-        self,
-        event: OutboxEvent,
-        error: str,
+            self,
+            event: OutboxEvent,
+            failure: OutboxFailure,
     ) -> OutboxEvent:
+        if not isinstance(failure, OutboxFailure):
+            raise TypeError(
+                "Outbox failure must be a controlled OutboxFailure"
+            )
 
         event.attempt_count += 1
-
-        event.last_error = error
+        event.last_error = failure.to_storage_value()
 
         self.session.flush()
-
         return event
+

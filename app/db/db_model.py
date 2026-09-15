@@ -34,7 +34,7 @@ from app.db.db_enum import (
     NotificationType,
     EventType,
     DeclarationStatus,
-    OutboxStatus
+    OutboxStatus, EventConsumer, BusinessType
 )
 
 
@@ -781,7 +781,7 @@ class Business(Base):
         nullable=True,
     )
 
-    business_type: Mapped[str] = mapped_column(
+    business_type: Mapped[BusinessType] = mapped_column(
         String(150),
         nullable=False,
     )
@@ -1975,8 +1975,8 @@ class OutboxEvent(Base):
     )
 
 
-class Event(Base):
-    __tablename__ = "events"
+class ProcessedEvent(Base):
+    __tablename__ = "processed_events"
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -1984,40 +1984,34 @@ class Event(Base):
         default=uuid4,
     )
 
-    event_type: Mapped[EventType] = mapped_column(
-        String(50),
-        nullable=False,
-        index=True,
-    )
-
-    entity_type: Mapped[str] = mapped_column(
-        String(50),
-        nullable=False,
-        index=True,
-    )
-
-    entity_id: Mapped[UUID] = mapped_column(
+    event_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
+        ForeignKey(
+            "outbox_events.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
-    payload: Mapped[dict | None] = mapped_column(
-        JSONB,
-        nullable=True,
+    consumer: Mapped[EventConsumer] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
     )
 
-    created_at: Mapped[datetime] = mapped_column(
+    processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
-        index=True,
     )
 
-    processed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        index=True,
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id",
+            "consumer",
+            name="uq_processed_event_consumer",
+        ),
     )
 
 
