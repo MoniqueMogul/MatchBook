@@ -1,5 +1,5 @@
 """
-Flags discrepancies for human review by writing to the shared Event table
+Flags discrepancies for human review via the outbox
 (EventType.DISCREPANCY_FLAGGED). Dedicated review-queue table TBD with core team.
 """
 
@@ -26,6 +26,7 @@ class DiscrepancyType(str, Enum):
     CONFLICTING_EXTERNAL_RECORDS = "CONFLICTING_EXTERNAL_RECORDS"
     LOW_CONFIDENCE_EXTRACTION = "LOW_CONFIDENCE_EXTRACTION"
     UNEXPECTED_FINANCIAL_ACTIVITY = "UNEXPECTED_FINANCIAL_ACTIVITY"
+    DOCUMENT_TYPE_MISMATCH = "DOCUMENT_TYPE_MISMATCH"
 
 
 @dataclass
@@ -71,5 +72,18 @@ def financial_mismatch_discrepancy(entity_type: str, entity_id: UUID, field_name
             "reported_value": reported_value,
             "authoritative_value": authoritative_value,
             "difference_pct": difference_pct,
+        },
+    )
+
+
+def document_type_mismatch_discrepancy(entity_type: str, entity_id: UUID, expected_type: str, detected_type: str, confidence: float) -> Discrepancy:
+    return Discrepancy(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        discrepancy_type=DiscrepancyType.DOCUMENT_TYPE_MISMATCH,
+        evidence={
+            "expected_type": expected_type,
+            "detected_type": detected_type,
+            "confidence": confidence,
         },
     )

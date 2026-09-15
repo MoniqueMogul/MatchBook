@@ -17,6 +17,8 @@ def publish_event(
         EventType.NDA_COMPLETED,
         EventType.DOCUMENT_UPLOADED,
         EventType.MESSAGE_CREATED,
+        EventType.DISCREPANCY_FLAGGED,
+        EventType.VERIFICATION_REVIEW_REQUIRED,
     }:
         celery_app.send_task(
             "app.notifications.tasks.process_notification_event",

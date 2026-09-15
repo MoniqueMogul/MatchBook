@@ -68,4 +68,4 @@ def confirm_upload(db: Session, document_id: UUID) -> None:
         raise ValueError("Cannot process document without signed authenticity declaration")
 
     documents_repo.update_status(db, document_id, VerificationStatus.UPLOADED)
-    process_document_task(document_id=str(document_id))
+    process_document_task.delay(document_id=str(document_id))

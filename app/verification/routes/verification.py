@@ -1,7 +1,10 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.verification.dependencies import get_current_user, get_db
+from app.auth.dependencies import get_current_user_id
+from app.verification.dependencies import get_db
 from app.verification.integrations import kyc_provider
 from app.verification.services import verification_service
 from app.verification.tasks.verification_tasks import start_business_verification_task, start_user_kyc_task
@@ -10,11 +13,11 @@ router = APIRouter(prefix="/verification", tags=["verification"])
 
 
 @router.post("/start")
-async def start_verification(entity_type: str, entity_id: str, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+async def start_verification(entity_type: str, entity_id: str, current_user: UUID = Depends(get_current_user_id), db: Session = Depends(get_db)):
     if entity_type == "user":
-        start_user_kyc_task(user_id=entity_id)
+        start_user_kyc_task.delay(user_id=entity_id)
     elif entity_type == "business":
-        start_business_verification_task(business_id=entity_id)
+        start_business_verification_task.delay(business_id=entity_id)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown entity_type: {entity_type}")
     return {"status": "PENDING"}

@@ -1,35 +1,25 @@
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
-class ExtractedFinancialFields(BaseModel):
-    year: Optional[int] = None
-    revenue: Optional[float] = None
-    sde: Optional[float] = None
-    ebitda: Optional[float] = None
-    reporting_period_start: Optional[str] = None
-    reporting_period_end: Optional[str] = None
+class DocumentClassification(BaseModel):
+    detected_type: str = Field(
+        ...,
+        description="The document type the model detected in the uploaded file.",
+    )
+    matches_expected: bool = Field(
+        ...,
+        description="Whether the detected type matches the expected document type.",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Model confidence in the classification (0.0–1.0).",
+    )
 
 
-class ExtractedIdentityFields(BaseModel):
-    full_name: Optional[str] = None
-    date_of_birth: Optional[str] = None
-    id_number: Optional[str] = None
-    issuing_country: Optional[str] = None
-    expiry_date: Optional[str] = None
-
-
-class FieldConfidence(BaseModel):
-    field: str
-    confidence: float = Field(..., ge=0.0, le=1.0)
-
-
-class ExtractionResult(BaseModel):
+class ClassificationResult(BaseModel):
     document_id: str
-    document_type: str
-    financial_fields: Optional[ExtractedFinancialFields] = None
-    identity_fields: Optional[ExtractedIdentityFields] = None
-    field_confidences: list[FieldConfidence] = []
-    overall_confidence: float = Field(..., ge=0.0, le=1.0)
-    raw_model_output: Optional[str] = None
+    expected_type: str
+    classification: DocumentClassification
+    raw_model_output: str | None = None

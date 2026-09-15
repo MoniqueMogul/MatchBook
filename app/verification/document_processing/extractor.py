@@ -4,49 +4,62 @@ from typing import Optional
 
 import openai
 
-from app.verification.schemas.extraction import ExtractedFinancialFields, ExtractionResult, FieldConfidence
+from app.db.db_enum import DocumentType
+from app.verification.schemas.extraction import ClassificationResult, DocumentClassification
 
 EXTRACTION_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
-EXTRACTION_PROMPT_TEMPLATE = """\
-Extract the following fields from this financial document if present:
-year, revenue, sde, ebitda, reporting_period_start, reporting_period_end.
-Return ONLY valid JSON, null for any field not found:
-{{"year": null, "revenue": null, "sde": null, "ebitda": null, "reporting_period_start": null, "reporting_period_end": null}}
+VALID_DOCUMENT_TYPES = ", ".join(dt.value for dt in DocumentType)
+
+CLASSIFICATION_PROMPT_TEMPLATE = """\
+Does this document appear to be a {expected_type}?
+
+Valid document types: {valid_types}
+
+Respond with ONLY valid JSON:
+{{"detected_type": "<one of the valid types>", "matches_expected": true/false, "confidence": <0.0-1.0>}}
 
 Document text:
 {document_text}
 """
 
 
-async def extract_financial_fields(document_id: str, document_text: str) -> ExtractionResult:
-    raw_output = await _call_extraction_model(document_text)
+async def classify_document(
+    document_id: str,
+    expected_type: str,
+    document_text: str,
+) -> ClassificationResult:
+    raw_output = await _call_classification_model(expected_type, document_text)
     parsed = _safe_json_parse(raw_output)
-    financial_fields = ExtractedFinancialFields(**parsed) if parsed else None
 
-    confidences = [FieldConfidence(field=k, confidence=0.85) for k, v in parsed.items() if v is not None] if parsed else []
-    overall_confidence = sum(c.confidence for c in confidences) / len(confidences) if confidences else 0.0
+    classification = (
+        DocumentClassification(**parsed)
+        if parsed
+        else DocumentClassification(detected_type="other", matches_expected=False, confidence=0.0)
+    )
 
-    return ExtractionResult(
-        document_id=document_id, document_type="financial_document", financial_fields=financial_fields,
-        field_confidences=confidences, overall_confidence=overall_confidence, raw_model_output=raw_output,
+    return ClassificationResult(
+        document_id=document_id,
+        expected_type=expected_type,
+        classification=classification,
+        raw_model_output=raw_output,
     )
 
 
-async def _call_extraction_model(document_text: str) -> str:
+async def _call_classification_model(expected_type: str, document_text: str) -> str:
     if not os.environ.get("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY is not set.")
 
     client = openai.AsyncOpenAI()
-    # TODO: wrap this call with Langfuse's @observe decorator once the
-    # open-source Langfuse instance is configured.
     response = await client.chat.completions.create(
         model=EXTRACTION_MODEL,
         messages=[
             {
                 "role": "user",
-                "content": EXTRACTION_PROMPT_TEMPLATE.format(
-                    document_text=document_text
+                "content": CLASSIFICATION_PROMPT_TEMPLATE.format(
+                    expected_type=expected_type,
+                    valid_types=VALID_DOCUMENT_TYPES,
+                    document_text=document_text,
                 ),
             }
         ],
