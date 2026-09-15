@@ -29,7 +29,7 @@ def test_main_health():
         response.json()
         == {
             "status": "healthy",
-            "service": "matchbook-api",
+            "services": "matchbook-api",
         }
     )
 
@@ -53,7 +53,7 @@ def test_matching_router_is_registered():
         response.json()
         == {
             "status": "healthy",
-            "service": "matching",
+            "services": "matching",
         }
     )
 
@@ -83,7 +83,7 @@ def test_database_health_success(
         response.json()
         == {
             "status": "healthy",
-            "service": "database",
+            "services": "database",
         }
     )
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.db_enum import OutboxStatus, EventConsumer
 from app.db.db_model import OutboxEvent, ProcessedEvent
 from app.events.schema import OutboxEventCreate
+from app.events.failure import OutboxFailure
 
 
 class OutboxRepositoryError(Exception):
@@ -32,7 +33,7 @@ class OutboxRepository:
     It deliberately does NOT commit or rollback.
 
     Transaction ownership belongs to the calling
-    service or worker.
+    services or worker.
     """
 
     def __init__(
@@ -186,16 +187,18 @@ class OutboxRepository:
         return processed_event
 
     def mark_publish_failed(
-        self,
-        event: OutboxEvent,
-        error: str,
+            self,
+            event: OutboxEvent,
+            failure: OutboxFailure,
     ) -> OutboxEvent:
+        if not isinstance(failure, OutboxFailure):
+            raise TypeError(
+                "Outbox failure must be a controlled OutboxFailure"
+            )
 
         event.attempt_count += 1
-
-        event.last_error = error
+        event.last_error = failure.to_storage_value()
 
         self.session.flush()
-
         return event
 

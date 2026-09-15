@@ -8,7 +8,7 @@ from app.matching.schemas import (
     BuyerMatchInput,
 )
 
-from app.matching.service import (
+from app.matching.services import (
     evaluate_candidate,
     rank_candidates,
     rank_eligible_candidates,

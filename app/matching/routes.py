@@ -19,7 +19,7 @@ from app.matching.config import (
     DEFAULT_TOP_N_MATCHES,
 )
 
-from app.matching.db_service import (
+from app.matching.services.db_service import (
     MatchingDatabaseServiceError,
     recalculate_matches_for_buyer,
 )
@@ -33,7 +33,7 @@ from app.matching.schemas import (
     BuyerMatchInput,
 )
 
-from app.matching.service import (
+from app.matching.services.service import (
     evaluate_candidate,
     rank_candidates,
 )
@@ -334,7 +334,7 @@ def matching_health() -> dict[str, str]:
 
     return {
         "status": "healthy",
-        "service": "matching",
+        "services": "matching",
     }
 
 
@@ -539,7 +539,7 @@ def recalculate_matches(
             ↓
         API Response
 
-    The database-backed service owns the transaction and
+    The database-backed services owns the transaction and
     persists eligible Match records.
     """
 

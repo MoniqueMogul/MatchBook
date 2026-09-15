@@ -7,6 +7,11 @@ from app.db.database import SessionLocal
 from app.db.db_enum import OutboxStatus, EventType
 from app.events.repository import OutboxRepository
 from app.events.router import publish_event
+from app.events.failure import OutboxFailure
+
+import logging
+
+log = logging.getLogger("matchbook.outbox")
 
 
 @celery_app.task(
@@ -49,57 +54,73 @@ def send_outbox_event(event_id: str) -> None:
 
         session.commit()
 
+
     except Exception as exc:
+
+        failure = OutboxFailure.from_exception(exc)
+
+        log.error(
+
+            "outbox_publish_failed",
+
+            extra={
+
+                "event": "outbox_publish_failed",
+
+                "event_id": event_id,
+
+                "error_type": failure.exception_type,
+
+            },
+
+        )
+
         session.rollback()
 
         _record_publish_failure(
+
             event_id=event_id,
-            error=str(exc),
+
+            failure=failure,
+
         )
 
         raise
 
-    finally:
-        session.close()
-
-
 def _record_publish_failure(
-    *,
-    event_id: str,
-    error: str,
+        *,
+        event_id: str,
+        failure: OutboxFailure,
 ) -> None:
-    """
-    Record publishing failure in a separate transaction.
-
-    The original transaction was rolled back, so we need
-    a new transaction to persist the failure metadata.
-    """
 
     session = SessionLocal()
 
     try:
-        repository = OutboxRepository(
-            session
-        )
 
-        event = repository.require_event(
-            UUID(event_id)
-        )
+        repository = OutboxRepository(session)
+
+        event = repository.require_event(UUID(event_id))
 
         repository.mark_publish_failed(
+
             event,
-            error=error,
+
+            failure=failure,
+
         )
 
         session.commit()
 
+
     except Exception:
+
         session.rollback()
+
         raise
 
     finally:
-        session.close()
 
+        session.close()
 
 
 @celery_app.task
