@@ -27,9 +27,8 @@ from app.matching.schemas import (
     RankedMatch,
 )
 
-from app.matching.services import (
-    rank_eligible_candidates,
-)
+from app.matching.services.service import (
+    rank_eligible_candidates)
 
 
 logger = logging.getLogger(
