@@ -139,7 +139,7 @@ class EventConsumer(str, Enum):
 
 
 class BusinessType(str, Enum):
-    SERVICE = "service"
+    SERVICE = "services"
     RETAIL = "retail"
     ECOMMERCE = "ecommerce"
     FRANCHISE = "franchise"

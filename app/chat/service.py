@@ -28,7 +28,7 @@ from app.events.schema import OutboxEventCreate
 
 
 class ChatServiceError(Exception):
-    """Base exception for chat service errors."""
+    """Base exception for chat services errors."""
 
 
 class ChatAccessDeniedError(ChatServiceError):

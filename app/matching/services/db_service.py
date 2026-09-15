@@ -27,7 +27,7 @@ from app.matching.schemas import (
     RankedMatch,
 )
 
-from app.matching.service import (
+from app.matching.services import (
     rank_eligible_candidates,
 )
 
@@ -235,7 +235,7 @@ def recalculate_matches_for_buyer(
                 ranked_match.evaluation,
             )
 
-        # When called directly by the API/service layer,
+        # When called directly by the API/services layer,
         # preserve the existing behavior and commit here.
         #
         # Event consumers pass commit=False so matching

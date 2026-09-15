@@ -16,6 +16,12 @@ from app.notification.routes import (
     router as notification_router,
 )
 
+from app.core.observability import (
+    RequestLogMiddleware,
+    configure_logging,
+)
+
+configure_logging()
 
 app = FastAPI(
     title="MatchBook API",
@@ -26,6 +32,8 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+app.add_middleware(RequestLogMiddleware)
 
 # ============================================================
 # APPLICATION HEALTH
@@ -43,7 +51,7 @@ def health_check() -> dict[str, str]:
 
     return {
         "status": "healthy",
-        "service": "matchbook-api",
+        "services": "matchbook-api",
     }
 
 
@@ -72,35 +80,19 @@ def database_health_check() -> dict[str, str]:
 
     return {
         "status": "healthy",
-        "service": "database",
+        "services": "database",
     }
 
 
-# ============================================================
-# INTAKE ROUTER
-# ============================================================
-
-
+# ============================
+# ROUTER
+# ============================
 app.include_router(
     intake_router,
 )
-
-
-# ============================================================
-# MATCHING ROUTER
-# ============================================================
-
-
 app.include_router(
     matching_router,
 )
-
-
-# ============================================================
-# NOTIFICATION ROUTER
-# ============================================================
-
-
 app.include_router(
     notification_router,
 )

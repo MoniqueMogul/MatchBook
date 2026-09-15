@@ -101,7 +101,7 @@ def test_matching_health():
         response.json()
         == {
             "status": "healthy",
-            "service": "matching",
+            "services": "matching",
         }
     )
 
