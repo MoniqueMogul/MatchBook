@@ -46,21 +46,6 @@ def list_conversations(
 
 
 @router.get(
-    "/conversations",
-    response_model=list[ConversationResponse],
-)
-def list_conversations(
-    current_user_id: UUID = Depends(get_current_user_id),
-    session: Session = Depends(get_db_session),
-):
-    service = ChatService(session)
-
-    return service.list_conversations(
-        user_id=current_user_id,
-    )
-
-
-@router.get(
     "/conversations/{conversation_id}/messages",
     response_model=list[MessageResponse],
 )

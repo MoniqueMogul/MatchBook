@@ -1,77 +1,120 @@
-from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclass(frozen=True)
-class BuyerMatchInput:
+from app.db.db_enum import DealPreference
+from app.intake.schemas.common import TargetLocation
+
+
+class MatchingModel(BaseModel):
     """
-    Structured buyer data required by the V1 Matching Engine.
+    Base model for internal Matching Engine data.
+
+    Matching receives already validated application data.
+    None means that a value or preference was not provided.
     """
 
-    buyer_id: UUID | int
+    model_config = ConfigDict(
+        from_attributes=True,
+        extra="forbid",
+    )
 
-    target_industries: list[str] | None
-    target_locations: dict[str, Any] | None
 
-    maximum_purchase_price: Decimal | None
+# ============================================================
+# BUYER INPUT
+# ============================================================
 
-    minimum_sde: Decimal | None
-    preferred_sde: Decimal
 
-    preferred_owner_hours: float
+class BuyerMatchInput(MatchingModel):
+    """
+    Buyer preferences used by the Matching Engine.
 
-    required_training_days: float
+    Optional preferences remain None.
 
-    deal_preference: str
+    None means the buyer has not specified a constraint or
+    preference for that dimension.
+    """
 
-    minimum_arr: Decimal
-    preferred_arr: Decimal
+    buyer_id: UUID
 
-    accepts_customer_concentration_above_25_percent: bool
+    # Hard-filter dimensions
+    target_industries: list[str] | None = None
+    target_locations: list[TargetLocation] | None = None
+    maximum_purchase_price: Decimal | None = None
 
-    # V1 hard eligibility constraint.
-    # None means the buyer has no minimum years requirement.
+    # FIT-scoring dimensions
+    minimum_sde: Decimal | None = None
+    preferred_sde: Decimal | None = None
+
+    minimum_arr: Decimal | None = None
+    preferred_arr: Decimal | None = None
+
+    preferred_owner_hours: int | None = None
+    required_training_days: int | None = None
+
+    deal_preference: DealPreference | None = None
+
     minimum_years_in_operation: int | None = None
 
+    accepts_customer_concentration_above_25_percent: (
+        bool | None
+    ) = None
 
-@dataclass(frozen=True)
-class BusinessMatchInput:
+
+# ============================================================
+# BUSINESS INPUT
+# ============================================================
+
+
+class BusinessMatchInput(MatchingModel):
     """
-    Structured seller/business data required by the V1 Matching Engine.
+    Business data required by the Matching Engine.
+
+    Optional business information remains None rather than
+    being replaced with artificial defaults.
     """
 
-    business_id: UUID | int
+    business_id: UUID
 
-    industry: str | None
+    # Hard-filter dimensions
+    industry: str
+    city: str
+    county: str | None = None
+    state: str
+    asking_price: Decimal | None = None
 
-    city: str | None
-    county: str | None
-    state: str | None
+    # FIT-scoring dimensions
+    sde: Decimal | None = None
+    arr: Decimal | None = None
 
-    asking_price: Decimal | None
+    owner_hours: int | None = None
+    transition_training_days: int | None = None
 
-    sde: Decimal | None
+    deal_preference: DealPreference | None = None
 
-    owner_hours: float
-
-    transition_training_days: float
-
-    deal_preference: str
-
-    arr: Decimal
-
-    largest_customer_percent: float
-
-    # Used by the V1 minimum-years hard filter.
     years_in_operation: int | None = None
 
+    customer_concentration: Decimal | None = None
 
-@dataclass(frozen=True)
-class DimensionScore:
+
+# ============================================================
+# DIMENSION SCORE
+# ============================================================
+
+
+class DimensionScore(MatchingModel):
     """
-    Explainable result for one matching dimension.
+    Score produced for one applicable matching dimension.
+
+    score:
+        Compatibility for the dimension from 0.0 to 1.0.
+
+    weight:
+        Effective weight after normalization.
+
+    contribution:
+        score * weight.
     """
 
     score: float
@@ -79,31 +122,34 @@ class DimensionScore:
     contribution: float
 
 
-@dataclass(frozen=True)
-class MatchEvaluation:
+# ============================================================
+# MATCH EVALUATION
+# ============================================================
+
+
+class MatchEvaluation(MatchingModel):
     """
-    Complete deterministic evaluation for one buyer/business pair.
+    Complete deterministic evaluation of one buyer/business pair.
     """
 
-    buyer_id: UUID | int
-    business_id: UUID | int
+    buyer_id: UUID
+    business_id: UUID
 
-    eligible: bool
-    failed_constraints: list[str]
-
-    score: float | None
-    percentage: float | None
+    score: float
 
     dimensions: dict[str, DimensionScore]
 
-    meets_threshold: bool
+
+# ============================================================
+# RANKED MATCH
+# ============================================================
 
 
-@dataclass(frozen=True)
-class RankedMatch:
+class RankedMatch(MatchingModel):
     """
-    One ranked eligible business.
+    Match after threshold filtering and ranking.
     """
 
     rank: int
     evaluation: MatchEvaluation
+

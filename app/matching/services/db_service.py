@@ -27,7 +27,7 @@ from app.matching.schemas import (
     RankedMatch,
 )
 
-from app.matching.services.service import (
+from app.matching.service import (
     rank_eligible_candidates)
 
 

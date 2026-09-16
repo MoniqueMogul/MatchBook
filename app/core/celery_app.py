@@ -86,7 +86,7 @@ celery_app.conf.update(
         "app.chat.tasks.process_chat_event": {
             "queue": "chat",
         },
-        "app.matching.tasks.rank_matches_task": {
+        "app.matching.tasks.process_matching_event_task": {
             "queue": "matching",
         },
     },

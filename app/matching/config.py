@@ -1,5 +1,8 @@
 from typing import Final
 
+from app.db.db_enum import MatchStatus
+
+
 
 MATCHING_VERSION: Final[str] = "v1"
 
@@ -33,6 +36,32 @@ DEAL_COMPATIBILITY: Final[dict[tuple[str, str], float]] = {
     ("either", "cash"): 1.00,
     ("either", "financing"): 1.00,
     ("either", "either"): 1.00,
+}
+
+
+# Matching engine may replace these recommendations.
+RERANKABLE_MATCH_STATUSES = {
+    MatchStatus.MATCHED,
+}
+
+
+# These matches remain visible independently of Top-N ranking.
+PROTECTED_MATCH_STATUSES = {
+    MatchStatus.INTERESTED,
+    MatchStatus.VERIFICATION,
+    MatchStatus.NDA,
+    MatchStatus.DUE_DILIGENCE,
+    MatchStatus.OFFER,
+    MatchStatus.LOI,
+    MatchStatus.FINANCING,
+    MatchStatus.CLOSING,
+    MatchStatus.COMPLETED,
+}
+
+
+# These buyer/business pairs must not be matched again automatically.
+BLOCKED_REMATCH_STATUSES = {
+    MatchStatus.REJECTED,
 }
 
 

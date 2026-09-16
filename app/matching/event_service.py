@@ -1,11 +1,10 @@
-# app/matching/event_service.py
-
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.db_enum import EventConsumer, EventType
-from app.events.repository import OutboxRepository
+from app.db.db_model import OutboxEvent, ProcessedEvent
 from app.matching.repository import MatchingRepository
 from app.matching.service import match_buyer, match_business
 
@@ -25,60 +24,68 @@ def process_matching_event(
     The caller owns commit / rollback.
     """
 
-    outbox_repository = OutboxRepository(session)
-    matching_repository = MatchingRepository(session)
+    event = session.scalar(
+        select(OutboxEvent).where(
+            OutboxEvent.id == event_id
+        )
+    )
 
-    # ----------------------------------------------------
-    # LOAD EVENT
-    # ----------------------------------------------------
-
-    event = outbox_repository.require_event(event_id)
+    if event is None:
+        raise MatchingEventError(
+            f"Outbox event {event_id} does not exist."
+        )
 
     # ----------------------------------------------------
     # IDEMPOTENCY
     # ----------------------------------------------------
 
-    if outbox_repository.is_processed(
-        event_id=event.id,
-        consumer=EventConsumer.MATCHING,
-    ):
+    already_processed = session.scalar(
+        select(ProcessedEvent.id).where(
+            ProcessedEvent.event_id == event.id,
+            ProcessedEvent.consumer == EventConsumer.MATCHING,
+        )
+    )
+
+    if already_processed is not None:
         return
 
-    # ----------------------------------------------------
-    # NORMALIZE EVENT TYPE
-    # ----------------------------------------------------
-
-    event_type = EventType(event.event_type)
+    repository = MatchingRepository(session)
 
     # ----------------------------------------------------
     # ROUTING
     # ----------------------------------------------------
 
-    if event_type == EventType.BUYER_PREFERENCES_UPDATED:
+    if (
+        event.event_type
+        == EventType.BUYER_PREFERENCES_UPDATED
+    ):
         match_buyer(
-            repository=matching_repository,
+            repository=repository,
             buyer_id=event.entity_id,
         )
 
-    elif event_type in {
+    elif event.event_type in {
         EventType.BUSINESS_CREATED,
         EventType.BUSINESS_UPDATED,
     }:
         match_business(
-            repository=matching_repository,
+            repository=repository,
             business_id=event.entity_id,
         )
 
     else:
         raise MatchingEventError(
-            f"Unsupported matching event: {event_type.value}"
+            f"Unsupported matching event: "
+            f"{event.event_type}"
         )
 
     # ----------------------------------------------------
     # MARK PROCESSED
     # ----------------------------------------------------
 
-    outbox_repository.mark_processed(
-        event_id=event.id,
-        consumer=EventConsumer.MATCHING,
+    session.add(
+        ProcessedEvent(
+            event_id=event.id,
+            consumer=EventConsumer.MATCHING,
+        )
     )
