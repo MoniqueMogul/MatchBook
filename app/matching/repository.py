@@ -11,7 +11,7 @@ from app.db.db_model import (
     BuyerPreferences,
     Match, BuyerProfile,
 )
-from app.matching.config import PRICE_TOLERANCE
+from app.matching.config import PRICE_TOLERANCE, RERANKABLE_MATCH_STATUSES
 
 
 class MatchingNotFoundError(Exception):
@@ -52,11 +52,9 @@ class MatchingRepository:
             )
         )
 
-
-
     def get_buyer_preferences(
-        self,
-        buyer_id: UUID,
+            self,
+            buyer_id: UUID,
     ) -> BuyerPreferences | None:
         return self.session.scalar(
             select(BuyerPreferences).where(
@@ -65,8 +63,8 @@ class MatchingRepository:
         )
 
     def require_buyer_preferences(
-        self,
-        buyer_id: UUID,
+            self,
+            buyer_id: UUID,
     ) -> BuyerPreferences:
         preferences = self.get_buyer_preferences(buyer_id)
 
@@ -85,11 +83,13 @@ class MatchingRepository:
     ) -> Match | None:
         return self.session.scalar(
             select(Match)
+            .join(Match.business)
             .options(joinedload(Match.business))
             .where(
                 Match.id == match_id,
                 Match.buyer_id == buyer_id,
                 Match.status == MatchStatus.MATCHED,
+                Business.status == BusinessStatus.ACTIVE,
             )
         )
 
@@ -98,8 +98,8 @@ class MatchingRepository:
     # ========================================================
 
     def get_business(
-        self,
-        business_id: UUID,
+            self,
+            business_id: UUID,
     ) -> Business | None:
         return self.session.scalar(
             select(Business).where(
@@ -108,8 +108,8 @@ class MatchingRepository:
         )
 
     def require_business(
-        self,
-        business_id: UUID,
+            self,
+            business_id: UUID,
     ) -> Business:
         business = self.get_business(business_id)
 
@@ -131,18 +131,35 @@ class MatchingRepository:
             excluded_business_ids: set[UUID] | None = None,
     ) -> list[Business]:
         """
-        Find active businesses satisfying the buyer's hard
-        matching constraints.
+        Find active, matching-ready businesses satisfying
+        the buyer's hard matching constraints.
 
         Hard filters:
             - active business
-            - industry, when specified
-            - state/city, when specified
-            - maximum purchase price + tolerance, when specified
+            - complete matching-required business data
+            - industry
+            - state/city
+            - maximum purchase price + tolerance
+
+        Intake should normally prevent incomplete businesses
+        from reaching Matching. The completeness checks here
+        are a defensive fallback for stale or invalid DB data.
         """
 
+        # ----------------------------------------------------
+        # ACTIVE + DEFENSIVE READINESS
+        # ----------------------------------------------------
+
         statement = select(Business).where(
-            Business.status == BusinessStatus.ACTIVE
+            Business.status == BusinessStatus.ACTIVE,
+            Business.asking_price.is_not(None),
+            Business.sde.is_not(None),
+            Business.arr.is_not(None),
+            Business.customer_concentration.is_not(None),
+            Business.owner_involvement_hours_per_week.is_not(None),
+            Business.transition_training_days.is_not(None),
+            Business.deal_preference.is_not(None),
+            Business.preferred_sale_timeline.is_not(None),
         )
 
         # ----------------------------------------------------
@@ -160,13 +177,16 @@ class MatchingRepository:
         # LOCATION
         # ----------------------------------------------------
 
+        # Matching intentionally uses state + optional city only.
+        # County is stored by Intake but is not currently a hard
+        # filter to avoid over-restricting marketplace visibility.
+
         if preferences.target_locations:
             location_filters = []
 
             for location in preferences.target_locations:
                 state = location.get("state")
 
-                # State is required by Intake.
                 conditions = [
                     Business.state == state
                 ]
@@ -196,19 +216,24 @@ class MatchingRepository:
             )
 
             price_ceiling = (
-                preferences.maximum_purchase_price
-                * (Decimal("1") + tolerance)
+                    preferences.maximum_purchase_price
+                    * (Decimal("1") + tolerance)
             )
 
             statement = statement.where(
-                Business.asking_price.is_not(None),
-                Business.asking_price <= price_ceiling,
+                Business.asking_price <= price_ceiling
             )
 
-            if excluded_business_ids:
-                statement = statement.where(
-                    Business.id.notin_(excluded_business_ids)
+        # ----------------------------------------------------
+        # EXISTING RELATIONSHIPS
+        # ----------------------------------------------------
+
+        if excluded_business_ids:
+            statement = statement.where(
+                Business.id.notin_(
+                    excluded_business_ids
                 )
+            )
 
         return list(
             self.session.scalars(statement).all()
@@ -219,17 +244,39 @@ class MatchingRepository:
     # ========================================================
 
     def get_candidate_buyers(
-        self,
-        business: Business,
+            self,
+            business: Business,
     ) -> list[BuyerPreferences]:
         """
-        Find buyers whose hard constraints allow the business.
+        Find matching-ready buyers whose hard constraints
+        allow the business.
 
-        None / empty preference means the buyer does not care
-        about that dimension.
+        Intake should normally prevent incomplete buyer
+        preferences from reaching Matching. The completeness
+        checks here are a defensive fallback for stale or
+        invalid DB data.
         """
 
-        statement = select(BuyerPreferences)
+        # ----------------------------------------------------
+        # DEFENSIVE READINESS
+        # ----------------------------------------------------
+
+        statement = select(BuyerPreferences).where(
+            BuyerPreferences.target_industries.is_not(None),
+            BuyerPreferences.target_industries != [],
+            BuyerPreferences.target_locations.is_not(None),
+            BuyerPreferences.target_locations != [],
+            BuyerPreferences.maximum_purchase_price.is_not(None),
+            BuyerPreferences.minimum_required_sde.is_not(None),
+            BuyerPreferences.preferred_sde.is_not(None),
+            BuyerPreferences.minimum_required_arr.is_not(None),
+            BuyerPreferences.preferred_arr.is_not(None),
+            BuyerPreferences.preferred_owner_hours_per_week.is_not(None),
+            BuyerPreferences.required_transition_training_days.is_not(None),
+            BuyerPreferences.deal_preference.is_not(None),
+            BuyerPreferences.accepts_customer_concentration_above_25_percent.is_not(None),
+            BuyerPreferences.preferred_acquisition_timeline.is_not(None),
+        )
 
         # ----------------------------------------------------
         # EXISTING NON-RERANKABLE RELATIONSHIPS
@@ -239,7 +286,9 @@ class MatchingRepository:
             select(Match.id).where(
                 Match.buyer_id == BuyerPreferences.buyer_id,
                 Match.business_id == business.id,
-                Match.status != MatchStatus.MATCHED,
+                Match.status.notin_(
+                    RERANKABLE_MATCH_STATUSES
+                ),
             )
         )
 
@@ -252,12 +301,8 @@ class MatchingRepository:
         # ----------------------------------------------------
 
         statement = statement.where(
-            or_(
-                BuyerPreferences.target_industries.is_(None),
-                BuyerPreferences.target_industries == [],
-                BuyerPreferences.target_industries.contains(
-                    [business.industry]
-                ),
+            BuyerPreferences.target_industries.contains(
+                [business.industry]
             )
         )
 
@@ -265,13 +310,15 @@ class MatchingRepository:
         # LOCATION
         # ----------------------------------------------------
 
-        location_conditions = [
-            BuyerPreferences.target_locations.is_(None),
-            BuyerPreferences.target_locations == [],
-        ]
+        # County is intentionally ignored.
+        #
+        # A target location can match:
+        #   {"state": "Texas"}
+        #
+        # or:
+        #   {"state": "Texas", "city": "Austin"}
 
-        # Buyer accepts anywhere in this state.
-        location_conditions.append(
+        location_conditions = [
             BuyerPreferences.target_locations.contains(
                 [
                     {
@@ -279,9 +326,8 @@ class MatchingRepository:
                     }
                 ]
             )
-        )
+        ]
 
-        # Buyer specifically accepts this city.
         if business.city:
             location_conditions.append(
                 BuyerPreferences.target_locations.contains(
@@ -308,31 +354,27 @@ class MatchingRepository:
             )
 
             minimum_budget = (
-                business.asking_price
-                / (Decimal("1") + tolerance)
+                    business.asking_price
+                    / (Decimal("1") + tolerance)
             )
 
             statement = statement.where(
-                or_(
-                    BuyerPreferences.maximum_purchase_price.is_(None),
-                    BuyerPreferences.maximum_purchase_price
-                    >= minimum_budget,
-                )
+                BuyerPreferences.maximum_purchase_price
+                >= minimum_budget
             )
 
         return list(
             self.session.scalars(statement).all()
         )
-
     # ========================================================
     # MATCH LOOKUP
     # ========================================================
 
     def get_match(
-        self,
-        *,
-        buyer_id: UUID,
-        business_id: UUID,
+            self,
+            *,
+            buyer_id: UUID,
+            business_id: UUID,
     ) -> Match | None:
         return self.session.scalar(
             select(Match).where(
@@ -381,10 +423,12 @@ class MatchingRepository:
     ) -> list[Match]:
         statement = (
             select(Match)
+            .join(Match.business)
             .options(joinedload(Match.business))
             .where(
                 Match.buyer_id == buyer_id,
                 Match.status == MatchStatus.MATCHED,
+                Business.status == BusinessStatus.ACTIVE,
             )
             .order_by(
                 Match.score.desc(),
@@ -434,8 +478,8 @@ class MatchingRepository:
     # ========================================================
 
     def add_match(
-        self,
-        match: Match,
+            self,
+            match: Match,
     ) -> Match:
         """
         Stage a new Match for persistence.
@@ -449,8 +493,8 @@ class MatchingRepository:
         return match
 
     def delete_match(
-        self,
-        match: Match,
+            self,
+            match: Match,
     ) -> None:
         """
         Remove a Match that is no longer valid.
@@ -461,7 +505,6 @@ class MatchingRepository:
         self.session.delete(match)
         self.session.flush()
 
-
     # ========================================================
     # MATCH PERSISTENCE
     # ========================================================
@@ -469,16 +512,11 @@ class MatchingRepository:
             self,
             buyer_id: UUID,
     ) -> list[Match]:
-        """
-        Return recommendations currently controlled by
-        the matching engine.
-        """
-
         return list(
             self.session.scalars(
                 select(Match).where(
                     Match.buyer_id == buyer_id,
-                    Match.status == MatchStatus.MATCHED,
+                    Match.status.in_(RERANKABLE_MATCH_STATUSES),
                 )
             ).all()
         )
@@ -498,7 +536,7 @@ class MatchingRepository:
             self.session.scalars(
                 select(Match.business_id).where(
                     Match.buyer_id == buyer_id,
-                    Match.status != MatchStatus.MATCHED,
+                    Match.status.notin_(RERANKABLE_MATCH_STATUSES),
                 )
             ).all()
         )
@@ -513,3 +551,5 @@ class MatchingRepository:
                 Match.id == match_id
             )
         )
+
+

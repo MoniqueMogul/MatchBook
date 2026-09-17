@@ -38,6 +38,7 @@ class BusinessMatchSummary(MatchingAPIModel):
 
     years_in_operation: int | None
 
+
 class MatchResponse(MatchingAPIModel):
     id: UUID
 
@@ -62,10 +63,6 @@ class BuyerMatchesResponse(MatchingAPIModel):
     limit: int
     offset: int
     has_more: bool
-
-
-
-
 
 
 class MatchDimensionResponse(MatchingAPIModel):

@@ -1,77 +1,134 @@
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
+from app.db.db_enum import DealPreference
 from app.matching.scoring import (
-    calculate_arr_score,
-    calculate_customer_concentration_score,
-    calculate_deal_score,
-    calculate_geography_score,
-    calculate_industry_score,
-    calculate_match_score,
-    calculate_owner_involvement_score,
-    calculate_price_score,
-    calculate_sde_score,
-    calculate_training_score,
+    score_arr,
+    score_candidate,
+    score_customer_concentration,
+    score_deal_preference,
+    score_owner_involvement,
+    score_price,
+    score_sde,
+    score_transition_training,
+)
+from app.matching.schemas import (
+    BusinessMatchInput,
+    BuyerMatchInput,
 )
 
 
 # ============================================================
-# INDUSTRY
+# TEST DATA
 # ============================================================
 
 
-def test_industry_match_score():
-    assert calculate_industry_score(True) == 1.0
+def make_buyer(**overrides) -> BuyerMatchInput:
+    data = {
+        "buyer_id": uuid4(),
+        "target_industries": ["HVAC"],
+        "target_locations": [
+            {
+                "state": "Florida",
+                "city": "Orlando",
+                "county": "Orange",
+            }
+        ],
+        "maximum_purchase_price": Decimal("500000"),
+        "minimum_sde": Decimal("100000"),
+        "preferred_sde": Decimal("200000"),
+        "minimum_arr": Decimal("200000"),
+        "preferred_arr": Decimal("500000"),
+        "preferred_owner_hours": 20,
+        "required_training_days": 30,
+        "deal_preference": DealPreference.CASH,
+        "accepts_customer_concentration_above_25_percent": False,
+    }
+
+    data.update(overrides)
+
+    return BuyerMatchInput(**data)
 
 
-def test_industry_mismatch_score():
-    assert calculate_industry_score(False) == 0.0
+def make_business(**overrides) -> BusinessMatchInput:
+    data = {
+        "business_id": uuid4(),
+        "industry": "HVAC",
+        "city": "Orlando",
+        "county": "Orange",
+        "state": "Florida",
+        "asking_price": Decimal("500000"),
+        "sde": Decimal("200000"),
+        "arr": Decimal("500000"),
+        "owner_hours": 20,
+        "transition_training_days": 30,
+        "deal_preference": DealPreference.CASH,
+        "customer_concentration": Decimal("20"),
+    }
+
+    data.update(overrides)
+
+    return BusinessMatchInput(**data)
 
 
 # ============================================================
-# GEOGRAPHY
+# PRICE
 # ============================================================
 
 
-def test_geography_match_score():
-    assert calculate_geography_score(True) == 1.0
-
-
-def test_geography_mismatch_score():
-    assert calculate_geography_score(False) == 0.0
-
-
-# ============================================================
-# PURCHASE PRICE
-# ============================================================
-
-
-@pytest.mark.parametrize(
-    "seller_price, expected_score",
-    [
-        ("450000", 1.00),
-        ("500000", 1.00),
-        ("515000", 0.80),
-        ("530000", 0.60),
-        ("545000", 0.40),
-        ("560000", 0.20),
-        ("575000", 0.00),
-        ("576000", 0.00),
-    ],
-)
-def test_price_formula_examples(
-    seller_price,
-    expected_score,
-):
-    score = calculate_price_score(
-        maximum_purchase_price=Decimal("500000"),
-        seller_price=Decimal(seller_price),
+def test_price_at_maximum_scores_one():
+    score = score_price(
+        maximum_price=Decimal("500000"),
+        asking_price=Decimal("500000"),
     )
 
-    assert score == pytest.approx(
-        expected_score
+    assert score == pytest.approx(1.0)
+
+
+def test_price_below_maximum_does_not_score_above_one():
+    score = score_price(
+        maximum_price=Decimal("500000"),
+        asking_price=Decimal("1"),
     )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_price_halfway_through_tolerance_scores_half():
+    # 15% tolerance on $500,000 = $75,000.
+    # Halfway through that range = $537,500.
+    score = score_price(
+        maximum_price=Decimal("500000"),
+        asking_price=Decimal("537500"),
+    )
+
+    assert score == pytest.approx(0.5)
+
+
+def test_price_exactly_at_tolerance_ceiling_scores_zero():
+    score = score_price(
+        maximum_price=Decimal("500000"),
+        asking_price=Decimal("575000"),
+    )
+
+    assert score == pytest.approx(0.0)
+
+
+def test_price_above_tolerance_ceiling_still_scores_zero():
+    """
+    Repository should normally remove this candidate.
+
+    Scoring must still fail closed if one slips through.
+    """
+
+    score = score_price(
+        maximum_price=Decimal("500000"),
+        asking_price=Decimal("900000"),
+    )
+
+    assert score == pytest.approx(0.0)
 
 
 # ============================================================
@@ -79,31 +136,89 @@ def test_price_formula_examples(
 # ============================================================
 
 
-@pytest.mark.parametrize(
-    "seller_sde, expected_score",
-    [
-        ("80000", 0.00),
-        ("100000", 0.00),
-        ("125000", 0.25),
-        ("150000", 0.50),
-        ("175000", 0.75),
-        ("200000", 1.00),
-        ("250000", 1.00),
-    ],
-)
-def test_sde_formula_examples(
-    seller_sde,
-    expected_score,
-):
-    score = calculate_sde_score(
+def test_sde_below_minimum_scores_zero():
+    score = score_sde(
         minimum_sde=Decimal("100000"),
         preferred_sde=Decimal("200000"),
-        seller_sde=Decimal(seller_sde),
+        business_sde=Decimal("99999"),
     )
 
-    assert score == pytest.approx(
-        expected_score
+    assert score == pytest.approx(0.0)
+
+
+def test_sde_exactly_at_minimum_scores_zero():
+    score = score_sde(
+        minimum_sde=Decimal("100000"),
+        preferred_sde=Decimal("200000"),
+        business_sde=Decimal("100000"),
     )
+
+    assert score == pytest.approx(0.0)
+
+
+def test_sde_halfway_between_minimum_and_preferred_scores_half():
+    score = score_sde(
+        minimum_sde=Decimal("100000"),
+        preferred_sde=Decimal("200000"),
+        business_sde=Decimal("150000"),
+    )
+
+    assert score == pytest.approx(0.5)
+
+
+def test_sde_at_preferred_scores_one():
+    score = score_sde(
+        minimum_sde=Decimal("100000"),
+        preferred_sde=Decimal("200000"),
+        business_sde=Decimal("200000"),
+    )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_sde_above_preferred_cannot_exceed_one():
+    score = score_sde(
+        minimum_sde=Decimal("100000"),
+        preferred_sde=Decimal("200000"),
+        business_sde=Decimal("999999999"),
+    )
+
+    assert score == pytest.approx(1.0)
+
+
+# ============================================================
+# ARR
+# ============================================================
+
+
+def test_arr_below_minimum_scores_zero():
+    score = score_arr(
+        minimum_arr=Decimal("200000"),
+        preferred_arr=Decimal("500000"),
+        business_arr=Decimal("100000"),
+    )
+
+    assert score == pytest.approx(0.0)
+
+
+def test_arr_between_minimum_and_preferred_is_proportional():
+    score = score_arr(
+        minimum_arr=Decimal("200000"),
+        preferred_arr=Decimal("500000"),
+        business_arr=Decimal("350000"),
+    )
+
+    assert score == pytest.approx(0.5)
+
+
+def test_arr_at_preferred_scores_one():
+    score = score_arr(
+        minimum_arr=Decimal("200000"),
+        preferred_arr=Decimal("500000"),
+        business_arr=Decimal("500000"),
+    )
+
+    assert score == pytest.approx(1.0)
 
 
 # ============================================================
@@ -111,62 +226,81 @@ def test_sde_formula_examples(
 # ============================================================
 
 
-@pytest.mark.parametrize(
-    "seller_hours, expected_score",
-    [
-        (5, 1.00),
-        (10, 1.00),
-        (15, 1.00),
-        (20, 1.00),
-        (25, 0.75),
-        (30, 0.50),
-        (35, 0.25),
-        (40, 0.00),
-        (45, 0.00),
-    ],
-)
-def test_owner_involvement_formula_examples(
-    seller_hours,
-    expected_score,
-):
-    score = calculate_owner_involvement_score(
-        buyer_preferred_hours=20,
-        seller_owner_hours=seller_hours,
+def test_owner_hours_at_preference_scores_one():
+    score = score_owner_involvement(
+        preferred_hours=20,
+        actual_hours=20,
     )
 
-    assert score == pytest.approx(
-        expected_score
+    assert score == pytest.approx(1.0)
+
+
+def test_fewer_owner_hours_scores_one():
+    score = score_owner_involvement(
+        preferred_hours=20,
+        actual_hours=5,
     )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_double_preferred_owner_hours_scores_half():
+    score = score_owner_involvement(
+        preferred_hours=20,
+        actual_hours=40,
+    )
+
+    assert score == pytest.approx(0.5)
+
+
+def test_zero_owner_hours_scores_one():
+    score = score_owner_involvement(
+        preferred_hours=20,
+        actual_hours=0,
+    )
+
+    assert score == pytest.approx(1.0)
 
 
 # ============================================================
-# TRAINING
+# TRANSITION TRAINING
 # ============================================================
 
 
-@pytest.mark.parametrize(
-    "seller_training, expected_score",
-    [
-        (0, 0.00),
-        (7, 7 / 30),
-        (15, 0.50),
-        (22, 22 / 30),
-        (30, 1.00),
-        (45, 1.00),
-    ],
-)
-def test_training_formula_examples(
-    seller_training,
-    expected_score,
-):
-    score = calculate_training_score(
-        buyer_required_training_days=30,
-        seller_offered_training_days=seller_training,
+def test_exact_required_training_scores_one():
+    score = score_transition_training(
+        required_days=30,
+        available_days=30,
     )
 
-    assert score == pytest.approx(
-        expected_score
+    assert score == pytest.approx(1.0)
+
+
+def test_more_training_does_not_score_above_one():
+    score = score_transition_training(
+        required_days=30,
+        available_days=365,
     )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_half_required_training_scores_half():
+    score = score_transition_training(
+        required_days=30,
+        available_days=15,
+    )
+
+    assert score == pytest.approx(0.5)
+
+
+def test_zero_required_training_scores_one():
+    score = score_transition_training(
+        required_days=0,
+        available_days=0,
+    )
+
+    assert score == pytest.approx(1.0)
 
 
 # ============================================================
@@ -176,82 +310,35 @@ def test_training_formula_examples(
 
 @pytest.mark.parametrize(
     (
-        "buyer_preference,"
-        "seller_preference,"
-        "expected_score"
+        "buyer_preference",
+        "business_preference",
+        "expected",
     ),
     [
-        ("cash", "cash", 1.00),
-        ("cash", "financing", 0.50),
-        ("cash", "either", 1.00),
-        ("financing", "cash", 0.50),
-        ("financing", "financing", 1.00),
-        ("financing", "either", 1.00),
-        ("either", "cash", 1.00),
-        ("either", "financing", 1.00),
-        ("either", "either", 1.00),
+        (DealPreference.CASH, DealPreference.CASH, 1.0),
+        (DealPreference.CASH, DealPreference.FINANCING, 0.5),
+        (DealPreference.CASH, DealPreference.EITHER, 1.0),
+
+        (DealPreference.FINANCING, DealPreference.CASH, 0.5),
+        (DealPreference.FINANCING, DealPreference.FINANCING, 1.0),
+        (DealPreference.FINANCING, DealPreference.EITHER, 1.0),
+
+        (DealPreference.EITHER, DealPreference.CASH, 1.0),
+        (DealPreference.EITHER, DealPreference.FINANCING, 1.0),
+        (DealPreference.EITHER, DealPreference.EITHER, 1.0),
     ],
 )
-def test_deal_compatibility_table(
+def test_every_deal_compatibility_combination(
     buyer_preference,
-    seller_preference,
-    expected_score,
+    business_preference,
+    expected,
 ):
-    score = calculate_deal_score(
-        buyer_preference,
-        seller_preference,
+    score = score_deal_preference(
+        buyer_preference=buyer_preference,
+        business_preference=business_preference,
     )
 
-    assert score == pytest.approx(
-        expected_score
-    )
-
-
-def test_deal_score_is_case_insensitive():
-    assert calculate_deal_score(
-        "Cash",
-        "EITHER",
-    ) == 1.0
-
-
-def test_invalid_deal_preference_fails():
-    with pytest.raises(ValueError):
-        calculate_deal_score(
-            "crypto",
-            "cash",
-        )
-
-
-# ============================================================
-# ARR
-# ============================================================
-
-
-@pytest.mark.parametrize(
-    "seller_arr, expected_score",
-    [
-        ("100000", 0.00),
-        ("200000", 0.00),
-        ("275000", 0.25),
-        ("350000", 0.50),
-        ("425000", 0.75),
-        ("500000", 1.00),
-        ("650000", 1.00),
-    ],
-)
-def test_arr_formula_examples(
-    seller_arr,
-    expected_score,
-):
-    score = calculate_arr_score(
-        minimum_arr=Decimal("200000"),
-        preferred_arr=Decimal("500000"),
-        seller_arr=Decimal(seller_arr),
-    )
-
-    assert score == pytest.approx(
-        expected_score
-    )
+    assert score == pytest.approx(expected)
 
 
 # ============================================================
@@ -259,207 +346,180 @@ def test_arr_formula_examples(
 # ============================================================
 
 
+def test_buyer_accepting_high_concentration_scores_one():
+    score = score_customer_concentration(
+        accepts_above_25_percent=True,
+        concentration=Decimal("99"),
+    )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_exactly_25_percent_scores_one():
+    score = score_customer_concentration(
+        accepts_above_25_percent=False,
+        concentration=Decimal("25"),
+    )
+
+    assert score == pytest.approx(1.0)
+
+
+def test_above_25_percent_scores_zero_when_not_accepted():
+    score = score_customer_concentration(
+        accepts_above_25_percent=False,
+        concentration=Decimal("25.0001"),
+    )
+
+    assert score == pytest.approx(0.0)
+
+
+# ============================================================
+# COMPLETE CANDIDATE
+# ============================================================
+
+
+def test_perfect_candidate_scores_one():
+    result = score_candidate(
+        buyer=make_buyer(),
+        business=make_business(),
+    )
+
+    assert result.score == pytest.approx(1.0)
+
+
+def test_every_dimension_is_present_for_complete_candidate():
+    result = score_candidate(
+        buyer=make_buyer(),
+        business=make_business(),
+    )
+
+    assert set(result.dimensions) == {
+        "purchase_price",
+        "sde",
+        "arr",
+        "owner_involvement",
+        "transition_training",
+        "deal_preference",
+        "customer_concentration",
+    }
+
+
+def test_dimension_weights_total_one():
+    result = score_candidate(
+        buyer=make_buyer(),
+        business=make_business(),
+    )
+
+    total_weight = sum(
+        dimension.weight
+        for dimension in result.dimensions.values()
+    )
+
+    assert total_weight == pytest.approx(1.0)
+
+
+def test_dimension_contributions_equal_final_score():
+    result = score_candidate(
+        buyer=make_buyer(),
+        business=make_business(),
+    )
+
+    total_contribution = sum(
+        dimension.contribution
+        for dimension in result.dimensions.values()
+    )
+
+    assert result.score == pytest.approx(
+        total_contribution
+    )
+
+
+# ============================================================
+# FAIL-CLOSED MISSING DATA
+# ============================================================
+
+
 @pytest.mark.parametrize(
-    (
-        "buyer_accepts,"
-        "seller_concentration,"
-        "expected_score"
-    ),
+    ("side", "field"),
     [
-        (True, 10, 1.00),
-        (True, 25, 1.00),
-        (True, 35, 1.00),
-        (True, 50, 1.00),
-        (False, 10, 1.00),
-        (False, 25, 1.00),
-        (False, 30, 0.50),
-        (False, 50, 0.50),
+        ("buyer", "maximum_purchase_price"),
+        ("buyer", "minimum_sde"),
+        ("buyer", "preferred_sde"),
+        ("buyer", "minimum_arr"),
+        ("buyer", "preferred_arr"),
+        ("buyer", "preferred_owner_hours"),
+        ("buyer", "required_training_days"),
+        ("buyer", "deal_preference"),
+        (
+            "buyer",
+            "accepts_customer_concentration_above_25_percent",
+        ),
+
+        ("business", "asking_price"),
+        ("business", "sde"),
+        ("business", "arr"),
+        ("business", "owner_hours"),
+        ("business", "transition_training_days"),
+        ("business", "deal_preference"),
+        ("business", "customer_concentration"),
     ],
 )
-def test_customer_concentration_examples(
-    buyer_accepts,
-    seller_concentration,
-    expected_score,
+def test_any_missing_required_scoring_field_forces_candidate_to_zero(
+    side,
+    field,
 ):
-    score = (
-        calculate_customer_concentration_score(
-            buyer_accepts,
-            seller_concentration,
-        )
+    buyer_overrides = {}
+    business_overrides = {}
+
+    if side == "buyer":
+        buyer_overrides[field] = None
+    else:
+        business_overrides[field] = None
+
+    result = score_candidate(
+        buyer=make_buyer(**buyer_overrides),
+        business=make_business(**business_overrides),
     )
 
-    assert score == pytest.approx(
-        expected_score
-    )
-
-
-def test_customer_concentration_rejects_invalid_percent():
-    with pytest.raises(ValueError):
-        calculate_customer_concentration_score(
-            False,
-            125,
-        )
+    assert result.score == pytest.approx(0.0)
+    assert result.dimensions == {}
 
 
 # ============================================================
-# FINAL MATCH SCORE
+# SCORE SAFETY INVARIANTS
 # ============================================================
 
 
-def test_final_match_score_from_specification():
-    """
-    Reproduce the exact worked example from Tim's V1
-    Matching Formula document.
-
-    Expected:
-        Match Score = 0.855
-        Match Percentage = 85.5%
-    """
-
-    result = calculate_match_score(
-        industry_score=1.00,
-        geography_score=1.00,
-        price_score=0.80,
-        sde_score=1.00,
-        owner_involvement_score=0.75,
-        training_score=0.75,
-        deal_score=1.00,
-        arr_score=0.80,
-        customer_concentration_score=0.50,
+@pytest.mark.parametrize(
+    "business",
+    [
+        make_business(),
+        make_business(
+            asking_price=Decimal("575000"),
+        ),
+        make_business(
+            sde=Decimal("100000"),
+        ),
+        make_business(
+            arr=Decimal("200000"),
+        ),
+        make_business(
+            owner_hours=1000,
+        ),
+        make_business(
+            transition_training_days=0,
+        ),
+        make_business(
+            customer_concentration=Decimal("100"),
+        ),
+    ],
+)
+def test_final_score_can_never_leave_zero_to_one_range(
+    business,
+):
+    result = score_candidate(
+        buyer=make_buyer(),
+        business=business,
     )
 
-    assert result.industry_contribution == pytest.approx(
-        0.00
-    )
-
-    assert result.geography_contribution == pytest.approx(
-        0.00
-    )
-
-    assert result.price_contribution == pytest.approx(
-        0.24
-    )
-
-    assert result.sde_contribution == pytest.approx(
-        0.30
-    )
-
-    assert (
-        result.owner_involvement_contribution
-        == pytest.approx(0.075)
-    )
-
-    assert result.training_contribution == pytest.approx(
-        0.075
-    )
-
-    assert result.deal_contribution == pytest.approx(
-        0.10
-    )
-
-    assert result.arr_contribution == pytest.approx(
-        0.04
-    )
-
-    assert (
-        result.customer_concentration_contribution
-        == pytest.approx(0.025)
-    )
-
-    assert result.match_score == pytest.approx(
-        0.855
-    )
-
-    assert result.match_percentage == pytest.approx(
-        85.5
-    )
-
-
-def test_perfect_match_scores_100_percent():
-    result = calculate_match_score(
-        industry_score=1.0,
-        geography_score=1.0,
-        price_score=1.0,
-        sde_score=1.0,
-        owner_involvement_score=1.0,
-        training_score=1.0,
-        deal_score=1.0,
-        arr_score=1.0,
-        customer_concentration_score=1.0,
-    )
-
-    assert result.match_score == pytest.approx(
-        1.0
-    )
-
-    assert result.match_percentage == pytest.approx(
-        100.0
-    )
-
-
-def test_industry_and_geography_do_not_change_v1_ranking():
-    """
-    Industry and Geography exist in the scoring architecture,
-    but their V1 weights are zero.
-    """
-
-    result = calculate_match_score(
-        industry_score=0.0,
-        geography_score=0.0,
-        price_score=1.0,
-        sde_score=1.0,
-        owner_involvement_score=1.0,
-        training_score=1.0,
-        deal_score=1.0,
-        arr_score=1.0,
-        customer_concentration_score=1.0,
-    )
-
-    assert result.match_score == pytest.approx(
-        1.0
-    )
-
-
-# ============================================================
-# VALIDATION / EDGE CASES
-# ============================================================
-
-
-def test_price_rejects_zero_maximum():
-    with pytest.raises(ValueError):
-        calculate_price_score(
-            Decimal("0"),
-            Decimal("100000"),
-        )
-
-
-def test_owner_involvement_zero_preferred_hours():
-    assert calculate_owner_involvement_score(
-        buyer_preferred_hours=0,
-        seller_owner_hours=10,
-    ) == 0.0
-
-
-def test_zero_required_training_is_fully_satisfied():
-    assert calculate_training_score(
-        buyer_required_training_days=0,
-        seller_offered_training_days=0,
-    ) == 1.0
-
-
-def test_match_score_clamps_scores():
-    result = calculate_match_score(
-        industry_score=2.0,
-        geography_score=2.0,
-        price_score=2.0,
-        sde_score=2.0,
-        owner_involvement_score=2.0,
-        training_score=2.0,
-        deal_score=2.0,
-        arr_score=2.0,
-        customer_concentration_score=2.0,
-    )
-
-    assert result.match_score == pytest.approx(
-        1.0
-    )
+    assert 0.0 <= result.score <= 1.0

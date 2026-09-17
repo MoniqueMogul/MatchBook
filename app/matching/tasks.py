@@ -15,9 +15,9 @@ class MatchingEventError(Exception):
 
 
 def process_matching_event(
-    *,
-    session: Session,
-    event_id: UUID,
+        *,
+        session: Session,
+        event_id: UUID,
 ) -> None:
     """
     Process one outbox event for the Matching consumer.
@@ -39,8 +39,8 @@ def process_matching_event(
     # ----------------------------------------------------
 
     if outbox_repository.is_processed(
-        event_id=event.id,
-        consumer=EventConsumer.MATCHING,
+            event_id=event.id,
+            consumer=EventConsumer.MATCHING,
     ):
         return
 

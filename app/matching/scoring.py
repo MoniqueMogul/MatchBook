@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from app.db.db_enum import DealPreference
 from app.matching.config import (
+    DEAL_COMPATIBILITY,
     PRICE_TOLERANCE,
     SCORING_WEIGHTS,
 )
@@ -38,20 +39,20 @@ def _score_minimum_preferred(
     Used for SDE and ARR.
 
     Rules:
-        actual >= preferred:
-            1.0
-
         actual < minimum:
             0.0
+
+        actual >= preferred:
+            1.0
 
         between minimum and preferred:
             linear score between 0.0 and 1.0
 
-    If only minimum exists:
-        meeting minimum = 1.0
+        only minimum exists:
+            meeting minimum = 1.0
 
-    If only preferred exists:
-        score proportionally toward preferred.
+        only preferred exists:
+            score proportionally toward preferred.
     """
 
     if minimum is not None and actual < minimum:
@@ -64,8 +65,10 @@ def _score_minimum_preferred(
         if minimum is not None:
             difference = preferred - minimum
 
-            if difference == 0:
-                return 1.0
+            if difference <= 0:
+                raise ValueError(
+                    "preferred must be greater than minimum."
+                )
 
             return _clamp(
                 float(
@@ -74,31 +77,28 @@ def _score_minimum_preferred(
                 )
             )
 
-        if preferred == 0:
+        if preferred <= 0:
             return 1.0
 
         return _clamp(
             float(actual / preferred)
         )
 
-    # Minimum exists and was already satisfied.
     if minimum is not None:
         return 1.0
 
     raise ValueError(
         "At least one preference must be supplied."
     )
-
-
 # ============================================================
 # PRICE
 # ============================================================
 
 
 def score_price(
-    *,
-    maximum_price: Decimal | None,
-    asking_price: Decimal | None,
+        *,
+        maximum_price: Decimal | None,
+        asking_price: Decimal | None,
 ) -> float | None:
     """
     Score purchase-price compatibility.
@@ -118,8 +118,8 @@ def score_price(
     """
 
     if (
-        maximum_price is None
-        or asking_price is None
+            maximum_price is None
+            or asking_price is None
     ):
         return None
 
@@ -131,8 +131,8 @@ def score_price(
     )
 
     ceiling = (
-        maximum_price
-        * (Decimal("1") + tolerance)
+            maximum_price
+            * (Decimal("1") + tolerance)
     )
 
     if asking_price >= ceiling:
@@ -140,11 +140,11 @@ def score_price(
 
     tolerance_range = ceiling - maximum_price
 
-    if tolerance_range == 0:
+    if tolerance_range <= 0:
         return 0.0
 
     amount_over = (
-        asking_price - maximum_price
+            asking_price - maximum_price
     )
 
     return _clamp(
@@ -161,30 +161,16 @@ def score_price(
 
 
 def score_sde(
-    *,
-    minimum_sde: Decimal | None,
-    preferred_sde: Decimal | None,
-    business_sde: Decimal | None,
+        *,
+        minimum_sde: Decimal | None,
+        preferred_sde: Decimal | None,
+        business_sde: Decimal | None,
 ) -> float | None:
-    """
-    Score Seller's Discretionary Earnings.
-
-    No buyer SDE preference:
-        not applicable
-
-    Buyer cares, but business SDE is missing:
-        not applicable
-
-    Otherwise score against minimum/preferred targets.
-    """
-
     if (
-        minimum_sde is None
-        and preferred_sde is None
+            minimum_sde is None
+            or preferred_sde is None
+            or business_sde is None
     ):
-        return None
-
-    if business_sde is None:
         return None
 
     return _score_minimum_preferred(
@@ -208,11 +194,9 @@ def score_arr(
 
     if (
         minimum_arr is None
-        and preferred_arr is None
+        or preferred_arr is None
+        or business_arr is None
     ):
-        return None
-
-    if business_arr is None:
         return None
 
     return _score_minimum_preferred(
@@ -221,16 +205,15 @@ def score_arr(
         preferred=preferred_arr,
     )
 
-
 # ============================================================
 # OWNER INVOLVEMENT
 # ============================================================
 
 
 def score_owner_involvement(
-    *,
-    preferred_hours: int | None,
-    actual_hours: int | None,
+        *,
+        preferred_hours: int | None,
+        actual_hours: int | None,
 ) -> float | None:
     """
     Lower owner involvement is better.
@@ -243,8 +226,8 @@ def score_owner_involvement(
     """
 
     if (
-        preferred_hours is None
-        or actual_hours is None
+            preferred_hours is None
+            or actual_hours is None
     ):
         return None
 
@@ -265,9 +248,9 @@ def score_owner_involvement(
 
 
 def score_transition_training(
-    *,
-    required_days: int | None,
-    available_days: int | None,
+        *,
+        required_days: int | None,
+        available_days: int | None,
 ) -> float | None:
     """
     More available seller training is better.
@@ -280,8 +263,8 @@ def score_transition_training(
     """
 
     if (
-        required_days is None
-        or available_days is None
+            required_days is None
+            or available_days is None
     ):
         return None
 
@@ -302,32 +285,32 @@ def score_transition_training(
 
 
 def score_deal_preference(
-    *,
-    buyer_preference: DealPreference | None,
-    business_preference: DealPreference | None,
+        *,
+        buyer_preference: DealPreference | None,
+        business_preference: DealPreference | None,
 ) -> float | None:
     """
-    Score compatibility between buyer and seller deal structure.
+    Score compatibility between the buyer's preferred deal
+    structure and the seller's preferred deal structure.
 
-    EITHER is compatible with CASH or FINANCING.
+    None means the dimension is not applicable.
+
+    Compatibility values are defined centrally in
+    DEAL_COMPATIBILITY.
     """
 
     if (
-        buyer_preference is None
-        or business_preference is None
+            buyer_preference is None
+            or business_preference is None
     ):
         return None
 
-    if buyer_preference == business_preference:
-        return 1.0
+    key = (
+        buyer_preference.value,
+        business_preference.value,
+    )
 
-    if (
-        buyer_preference == DealPreference.EITHER
-        or business_preference == DealPreference.EITHER
-    ):
-        return 1.0
-
-    return 0.0
+    return DEAL_COMPATIBILITY[key]
 
 
 # ============================================================
@@ -336,9 +319,9 @@ def score_deal_preference(
 
 
 def score_customer_concentration(
-    *,
-    accepts_above_25_percent: bool | None,
-    concentration: Decimal | None,
+        *,
+        accepts_above_25_percent: bool | None,
+        concentration: Decimal | None,
 ) -> float | None:
     """
     Score buyer tolerance for customer concentration.
@@ -354,8 +337,8 @@ def score_customer_concentration(
     """
 
     if (
-        accepts_above_25_percent is None
-        or concentration is None
+            accepts_above_25_percent is None
+            or concentration is None
     ):
         return None
 
@@ -374,9 +357,9 @@ def score_customer_concentration(
 
 
 def score_candidate(
-    *,
-    buyer: BuyerMatchInput,
-    business: BusinessMatchInput,
+        *,
+        buyer: BuyerMatchInput,
+        business: BusinessMatchInput,
 ) -> MatchEvaluation:
     """
     Calculate deterministic FIT score for one buyer/business pair.
@@ -433,7 +416,7 @@ def score_candidate(
         if score is not None
     }
 
-    if not applicable_scores:
+    if any(score is None for score in raw_scores.values()):
         return MatchEvaluation(
             buyer_id=buyer.buyer_id,
             business_id=business.business_id,
@@ -454,12 +437,12 @@ def score_candidate(
         original_weight = SCORING_WEIGHTS[name]
 
         normalized_weight = (
-            original_weight
-            / total_applicable_weight
+                original_weight
+                / total_applicable_weight
         )
 
         contribution = (
-            score * normalized_weight
+                score * normalized_weight
         )
 
         dimensions[name] = DimensionScore(
