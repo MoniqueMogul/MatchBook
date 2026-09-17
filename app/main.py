@@ -8,6 +8,8 @@ from app.intake.routes import (
     router as intake_router,
 )
 
+from app.chat.routes import router as chat_router
+
 from app.matching.routes import (
     router as matching_router,
 )
@@ -32,8 +34,8 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
 app.add_middleware(RequestLogMiddleware)
+
 
 # ============================================================
 # APPLICATION HEALTH
@@ -95,4 +97,8 @@ app.include_router(
 )
 app.include_router(
     notification_router,
+)
+
+app.include_router(
+    chat_router,
 )

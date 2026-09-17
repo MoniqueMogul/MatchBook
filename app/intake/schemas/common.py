@@ -1,5 +1,3 @@
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -15,25 +13,44 @@ class IntakeModel(BaseModel):
 
 
 class TargetLocation(IntakeModel):
-    """A standardized location selected from LocationIQ autocomplete."""
+    """
+    Standardized location selected through location autocomplete.
 
-    provider: Literal["locationiq"]
-    place_id: str = Field(min_length=1, max_length=100)
-    display_name: str = Field(min_length=1, max_length=500)
-    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
-    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
-    city: str | None = Field(default=None, max_length=150)
-    county: str | None = Field(default=None, max_length=150)
-    state: str | None = Field(default=None, max_length=150)
-    country: str | None = Field(default=None, max_length=150)
-    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    Only fields used by Matchbook are persisted.
+    """
 
-    @field_validator("state", "city", "county", "country")
+    state: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    city: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    county: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    country_code: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
+    @field_validator(
+        "state",
+        "city",
+        "county",
+        "country_code",
+    )
     @classmethod
     def blank_string_becomes_none(
         cls,
         value: str | None,
     ) -> str | None:
+
         if value is None:
             return None
 
@@ -41,10 +58,12 @@ class TargetLocation(IntakeModel):
 
         return value or None
 
-    @field_validator("country_code", mode="before")
-    @classmethod
-    def uppercase_country_code(cls, value: object) -> object:
-        return value.strip().upper() if isinstance(value, str) else value
-
     def has_any_value(self) -> bool:
-        return bool(self.provider and self.place_id and self.display_name)
+        return any(
+            (
+                self.state,
+                self.city,
+                self.county,
+                self.country_code,
+            )
+        )

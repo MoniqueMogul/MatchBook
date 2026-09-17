@@ -12,17 +12,28 @@ def publish_event(
 
     published = False
 
+    # ----------------------------------------------------
+    # MATCHING
+    # ----------------------------------------------------
+
     if event_type in {
-        EventType.BUYER_CREATED,
+        EventType.BUYER_PREFERENCES_UPDATED,
         EventType.BUSINESS_CREATED,
+        EventType.BUSINESS_UPDATED,
     }:
         celery_app.send_task(
-            "app.matching.tasks.process_matching_event",
-            kwargs={"event": message},
+            "app.matching.tasks.process_matching_event_task",
+            kwargs={
+                "event_id": message["event_id"],
+            },
             queue="matching",
         )
 
         published = True
+
+    # ----------------------------------------------------
+    # NOTIFICATIONS
+    # ----------------------------------------------------
 
     if event_type in {
         EventType.MATCH_CREATED,
@@ -40,6 +51,10 @@ def publish_event(
 
         published = True
 
+    # ----------------------------------------------------
+    # CHAT
+    # ----------------------------------------------------
+
     if event_type == EventType.NDA_COMPLETED:
         celery_app.send_task(
             "app.chat.tasks.process_chat_event",
@@ -48,6 +63,10 @@ def publish_event(
         )
 
         published = True
+
+    # ----------------------------------------------------
+    # NO CONSUMER
+    # ----------------------------------------------------
 
     if not published:
         raise ValueError(

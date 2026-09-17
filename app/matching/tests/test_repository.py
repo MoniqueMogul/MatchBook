@@ -1,1102 +1,622 @@
 from decimal import Decimal
-from unittest.mock import Mock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
+from sqlalchemy.dialects import postgresql
 
-from app.db.db_enum import (
-    BusinessStatus,
-    DealPreference,
-)
-
-from app.db.db_model import (
-    Business,
-    BuyerPreferences,
-    Match,
-)
-
-from app.matching.repository import (
-    MatchingDataIncompleteError,
-    MatchingRepositoryError,
-    build_business_match_input,
-    build_buyer_match_input,
-    build_score_breakdown,
-    get_candidate_businesses,
-    get_existing_match,
-    upsert_match,
-)
-
-from app.matching.schemas import (
-    DimensionScore,
-    MatchEvaluation,
-)
+from app.db.db_enum import BusinessStatus, MatchStatus
+from app.matching.repository import MatchingRepository
 
 
-def make_buyer_preferences() -> BuyerPreferences:
-    return BuyerPreferences(
-        id=uuid4(),
+# ============================================================
+# HELPERS
+# ============================================================
 
-        buyer_id=uuid4(),
 
-        target_industries=[
-            "HVAC",
+def make_repository():
+    session = MagicMock()
+    repository = MatchingRepository(session)
+
+    return repository, session
+
+
+def compile_statement(statement):
+    """
+    Compile using the PostgreSQL dialect.
+
+    We intentionally do NOT use literal_binds=True because
+    PostgreSQL JSONB values such as [] cannot always be rendered
+    directly as SQL literals by SQLAlchemy.
+    """
+
+    compiled = statement.compile(
+        dialect=postgresql.dialect()
+    )
+
+    return str(compiled), compiled.params
+
+
+def captured_statement(session):
+    return session.scalars.call_args.args[0]
+
+
+def where_sql(statement) -> str:
+    """
+    Return only the WHERE portion of the compiled SQL.
+
+    This prevents SELECT columns such as businesses.county from
+    being mistaken for hard-filter conditions.
+    """
+
+    sql, _ = compile_statement(statement)
+
+    if "WHERE " not in sql:
+        return ""
+
+    return sql.split("WHERE ", 1)[1]
+
+
+def make_preferences(**overrides):
+    defaults = {
+        "buyer_id": uuid4(),
+        "target_industries": ["Technology"],
+        "target_locations": [
+            {
+                "state": "Texas",
+                "city": "Austin",
+                "county": "Travis",
+            }
         ],
-
-        target_locations={
-            "state": "Florida",
-        },
-
-        maximum_purchase_price=Decimal(
-            "500000"
-        ),
-
-        minimum_required_sde=Decimal(
-            "100000"
-        ),
-
-        preferred_sde=Decimal(
-            "200000"
-        ),
-
-        minimum_required_arr=Decimal(
-            "200000"
-        ),
-
-        preferred_arr=Decimal(
-            "500000"
-        ),
-
-        preferred_owner_hours_per_week=20,
-
-        required_transition_training_days=30,
-
-        deal_preference=(
-            DealPreference.CASH
-        ),
-
-        minimum_years_in_operation=3,
-
-        accepts_customer_concentration_above_25_percent=False,
-    )
-
-
-def make_business() -> Business:
-    return Business(
-        id=uuid4(),
-
-        seller_id=uuid4(),
-
-        business_type=(
-            "Service Business"
-        ),
-
-        industry="HVAC",
-
-        city="Orlando",
-
-        county="Orange",
-
-        state="Florida",
-
-        zip_code="32801",
-
-        years_in_operation=10,
-
-        arr=Decimal(
-            "500000"
-        ),
-
-        customer_concentration=Decimal(
-            "20"
-        ),
-
-        asking_price=Decimal(
-            "500000"
-        ),
-
-        sde=Decimal(
-            "200000"
-        ),
-
-        owner_involvement_hours_per_week=20,
-
-        transition_training_days=30,
-
-        deal_preference=(
-            DealPreference.CASH
-        ),
-
-        status=(
-            BusinessStatus.ACTIVE
-        ),
-    )
-
-
-def make_evaluation(
-    *,
-    buyer_id=None,
-    business_id=None,
-    score=0.855,
-) -> MatchEvaluation:
-
-    buyer_id = (
-        buyer_id
-        or uuid4()
-    )
-
-    business_id = (
-        business_id
-        or uuid4()
-    )
-
-    dimensions = {
-        "industry": (
-            DimensionScore(
-                score=1.0,
-                weight=0.0,
-                contribution=0.0,
-            )
-        ),
-
-        "geography": (
-            DimensionScore(
-                score=1.0,
-                weight=0.0,
-                contribution=0.0,
-            )
-        ),
-
-        "purchase_price": (
-            DimensionScore(
-                score=0.8,
-                weight=0.30,
-                contribution=0.24,
-            )
-        ),
-
-        "sde": (
-            DimensionScore(
-                score=1.0,
-                weight=0.30,
-                contribution=0.30,
-            )
-        ),
-
-        "owner_involvement": (
-            DimensionScore(
-                score=0.75,
-                weight=0.10,
-                contribution=0.075,
-            )
-        ),
-
-        "transition_training": (
-            DimensionScore(
-                score=0.75,
-                weight=0.10,
-                contribution=0.075,
-            )
-        ),
-
-        "deal_preference": (
-            DimensionScore(
-                score=1.0,
-                weight=0.10,
-                contribution=0.10,
-            )
-        ),
-
-        "arr": (
-            DimensionScore(
-                score=0.8,
-                weight=0.05,
-                contribution=0.04,
-            )
-        ),
-
-        "customer_concentration": (
-            DimensionScore(
-                score=0.5,
-                weight=0.05,
-                contribution=0.025,
-            )
-        ),
+        "maximum_purchase_price": Decimal("1000000"),
     }
 
-    return MatchEvaluation(
-        buyer_id=(
-            buyer_id
-        ),
+    defaults.update(overrides)
 
-        business_id=(
-            business_id
-        ),
+    preferences = MagicMock()
 
-        eligible=True,
+    for name, value in defaults.items():
+        setattr(preferences, name, value)
 
-        failed_constraints=[],
+    return preferences
 
-        score=(
-            score
-        ),
 
-        percentage=(
-            score
-            * 100
-        ),
+def make_business(**overrides):
+    defaults = {
+        "id": uuid4(),
+        "industry": "Technology",
+        "state": "Texas",
+        "city": "Austin",
+        "county": "Travis",
+        "asking_price": Decimal("1000000"),
+        "status": BusinessStatus.ACTIVE,
+    }
 
-        dimensions=(
-            dimensions
-        ),
+    defaults.update(overrides)
 
-        meets_threshold=True,
-    )
+    business = MagicMock()
+
+    for name, value in defaults.items():
+        setattr(business, name, value)
+
+    return business
 
 
 # ============================================================
-# DATABASE CANDIDATE FILTERING
+# BUYER -> BUSINESS
 # ============================================================
 
 
-def _capture_candidate_query(
-    preferences: BuyerPreferences,
-):
-    """
-    Execute get_candidate_businesses with a mocked session and
-    return the SQLAlchemy Select statement passed to scalars().
-    """
+def test_candidate_businesses_filters_active_businesses():
+    repository, session = make_repository()
 
-    session = Mock()
-
-    scalar_result = Mock()
-
-    scalar_result.all.return_value = []
-
-    session.scalars.return_value = (
-        scalar_result
+    repository.get_candidate_businesses(
+        make_preferences()
     )
 
-    result = get_candidate_businesses(
-        session,
-        preferences,
+    statement = captured_statement(session)
+    sql, params = compile_statement(statement)
+
+    assert "businesses.status" in where_sql(statement)
+    assert BusinessStatus.ACTIVE.value in params.values()
+
+
+def test_candidate_businesses_filters_target_industry():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_industries=[
+                "Technology",
+                "Manufacturing",
+            ]
+        )
     )
 
-    assert result == []
+    statement = captured_statement(session)
+    sql, params = compile_statement(statement)
 
-    session.scalars.assert_called_once()
+    assert "businesses.industry IN" in where_sql(statement)
 
-    return (
-        session.scalars.call_args.args[
-            0
-        ]
+    values = list(params.values())
+
+    assert any(
+        isinstance(value, list)
+        and "Technology" in value
+        and "Manufacturing" in value
+        for value in values
     )
 
 
-def test_candidate_query_filters_industry_in_database():
-    preferences = (
-        make_buyer_preferences()
+def test_candidate_businesses_skips_industry_filter_when_empty():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_industries=[]
+        )
     )
 
-    preferences.target_locations = None
+    statement = captured_statement(session)
 
-    preferences.target_industries = [
-        "HVAC",
+    assert "businesses.industry IN" not in where_sql(statement)
+
+
+def test_candidate_businesses_filters_state():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_locations=[
+                {
+                    "state": "Texas",
+                    "city": None,
+                    "county": None,
+                }
+            ]
+        )
+    )
+
+    statement = captured_statement(session)
+    sql, params = compile_statement(statement)
+
+    assert "businesses.state" in where_sql(statement)
+    assert "Texas" in params.values()
+
+
+def test_candidate_businesses_filters_city_when_present():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_locations=[
+                {
+                    "state": "Texas",
+                    "city": "Austin",
+                    "county": None,
+                }
+            ]
+        )
+    )
+
+    statement = captured_statement(session)
+    sql, params = compile_statement(statement)
+
+    where = where_sql(statement)
+
+    assert "businesses.state" in where
+    assert "businesses.city" in where
+
+    assert "Texas" in params.values()
+    assert "Austin" in params.values()
+
+
+def test_candidate_businesses_does_not_filter_county():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_locations=[
+                {
+                    "state": "Texas",
+                    "city": "Austin",
+                    "county": "Travis",
+                }
+            ]
+        )
+    )
+
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    where = where_sql(statement)
+
+    assert "businesses.county" not in where
+    assert "Travis" not in params.values()
+
+
+def test_candidate_businesses_supports_multiple_locations():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            target_locations=[
+                {
+                    "state": "Texas",
+                    "city": "Austin",
+                },
+                {
+                    "state": "Florida",
+                    "city": "Miami",
+                },
+            ]
+        )
+    )
+
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    values = list(params.values())
+    where = where_sql(statement)
+
+    assert "Texas" in values
+    assert "Austin" in values
+    assert "Florida" in values
+    assert "Miami" in values
+
+    assert " OR " in where
+
+
+def test_candidate_businesses_applies_15_percent_price_tolerance():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            maximum_purchase_price=Decimal("1000000")
+        )
+    )
+
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    assert Decimal("1150000.00") in params.values()
+
+
+def test_candidate_businesses_rejects_unknown_price_when_buyer_has_maximum():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            maximum_purchase_price=Decimal("1000000")
+        )
+    )
+
+    statement = captured_statement(session)
+
+    assert (
+        "businesses.asking_price IS NOT NULL"
+        in where_sql(statement)
+    )
+
+
+def test_candidate_businesses_does_not_apply_price_filter_without_maximum():
+    repository, session = make_repository()
+
+    repository.get_candidate_businesses(
+        make_preferences(
+            maximum_purchase_price=None
+        )
+    )
+
+    statement = captured_statement(session)
+
+    where = where_sql(statement)
+
+    assert "asking_price IS NOT NULL" not in where
+    assert "asking_price <=" not in where
+
+
+def test_candidate_businesses_excludes_existing_relationship_ids():
+    repository, session = make_repository()
+
+    excluded_id_1 = uuid4()
+    excluded_id_2 = uuid4()
+
+    repository.get_candidate_businesses(
+        make_preferences(),
+        excluded_business_ids={
+            excluded_id_1,
+            excluded_id_2,
+        },
+    )
+
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    assert "NOT IN" in where_sql(statement)
+
+    parameter_collections = [
+        value
+        for value in params.values()
+        if isinstance(value, (list, tuple, set))
     ]
 
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
+    assert any(
+        excluded_id_1 in value
+        and excluded_id_2 in value
+        for value in parameter_collections
     )
 
-    sql = str(
-        statement
-    ).lower()
 
-    assert "industry" in sql
+def test_candidate_business_exclusions_work_without_price_preference():
+    repository, session = make_repository()
 
-    assert "lower(" in sql
+    excluded_id = uuid4()
 
-
-def test_candidate_query_filters_single_state_in_database():
-    preferences = (
-        make_buyer_preferences()
+    repository.get_candidate_businesses(
+        make_preferences(
+            maximum_purchase_price=None
+        ),
+        excluded_business_ids={
+            excluded_id
+        },
     )
 
-    preferences.target_locations = {
-        "state": "Florida",
-    }
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
 
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
+    assert "NOT IN" in where_sql(statement)
 
-    sql = str(
-        statement
-    ).lower()
+    parameter_collections = [
+        value
+        for value in params.values()
+        if isinstance(value, (list, tuple, set))
+    ]
 
-    assert "state" in sql
-
-    assert "lower(" in sql
-
-
-def test_candidate_query_filters_multiple_states_in_database():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = {
-        "state": [
-            "Florida",
-            "Georgia",
-        ],
-    }
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    sql = str(
-        statement
-    ).lower()
-
-    assert "state" in sql
-
-    assert " in " in sql
-
-
-def test_candidate_query_filters_city_in_database():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = {
-        "city": "Orlando",
-    }
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    sql = str(
-        statement
-    ).lower()
-
-    assert "city" in sql
-
-    assert "lower(" in sql
-
-
-def test_candidate_query_filters_county_in_database():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = {
-        "county": "Orange",
-    }
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    sql = str(
-        statement
-    ).lower()
-
-    assert "county" in sql
-
-    assert "lower(" in sql
-
-
-def test_candidate_query_combines_state_city_and_county():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = {
-        "state": "Florida",
-        "city": "Orlando",
-        "county": "Orange",
-    }
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    sql = str(
-        statement
-    ).lower()
-
-    assert "state" in sql
-    assert "city" in sql
-    assert "county" in sql
-
-
-def test_candidate_query_without_geography_has_no_location_filter():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = None
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    sql = str(
-        statement
-    ).lower()
-
-    assert "lower(businesses.state)" not in sql
-    assert "lower(businesses.city)" not in sql
-    assert "lower(businesses.county)" not in sql
-
-
-def test_candidate_query_applies_price_tolerance_ceiling():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.target_locations = None
-
-    preferences.target_industries = None
-
-    preferences.maximum_purchase_price = (
-        Decimal(
-            "500000"
-        )
-    )
-
-    statement = (
-        _capture_candidate_query(
-            preferences
-        )
-    )
-
-    compiled = (
-        statement.compile()
-    )
-
-    parameter_values = list(
-        compiled.params.values()
-    )
-
-    assert (
-        Decimal(
-            "575000.00"
-        )
-        in parameter_values
+    assert any(
+        excluded_id in value
+        for value in parameter_collections
     )
 
 
 # ============================================================
-# BUYER INPUT MAPPING
+# BUSINESS -> BUYERS
 # ============================================================
 
 
-def test_build_buyer_match_input():
-    preferences = (
-        make_buyer_preferences()
-    )
+def test_candidate_buyers_filters_target_industry():
+    repository, session = make_repository()
 
-    result = (
-        build_buyer_match_input(
-            preferences
+    repository.get_candidate_buyers(
+        make_business(
+            industry="Technology"
         )
     )
 
-    assert (
-        result.buyer_id
-        == preferences.buyer_id
-    )
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
 
-    assert (
-        result.target_industries
-        == [
-            "HVAC",
-        ]
-    )
+    assert "target_industries" in where_sql(statement)
 
-    assert (
-        result.maximum_purchase_price
-        == Decimal(
-            "500000"
-        )
-    )
-
-    assert (
-        result.minimum_sde
-        == Decimal(
-            "100000"
-        )
-    )
-
-    assert (
-        result.preferred_sde
-        == Decimal(
-            "200000"
-        )
-    )
-
-    assert (
-        result.minimum_arr
-        == Decimal(
-            "200000"
-        )
-    )
-
-    assert (
-        result.preferred_arr
-        == Decimal(
-            "500000"
-        )
-    )
-
-    assert (
-        result.preferred_owner_hours
-        == 20.0
-    )
-
-    assert (
-        result.required_training_days
-        == 30.0
-    )
-
-    assert (
-        result.deal_preference
-        == "cash"
-    )
-
-    assert (
-        result.accepts_customer_concentration_above_25_percent
-        is False
-    )
-
-    assert (
-        result.minimum_years_in_operation
-        == 3
+    assert any(
+        value == ["Technology"]
+        for value in params.values()
     )
 
 
-def test_buyer_missing_required_scoring_field_fails():
-    preferences = (
-        make_buyer_preferences()
-    )
+def test_candidate_buyers_allows_buyers_without_industry_preference():
+    repository, session = make_repository()
 
-    preferences.preferred_sde = (
-        None
-    )
-
-    with pytest.raises(
-        MatchingDataIncompleteError
-    ):
-        build_buyer_match_input(
-            preferences
-        )
-
-
-def test_missing_minimum_arr_defaults_to_zero():
-    preferences = (
-        make_buyer_preferences()
-    )
-
-    preferences.minimum_required_arr = (
-        None
-    )
-
-    result = (
-        build_buyer_match_input(
-            preferences
-        )
-    )
-
-    assert (
-        result.minimum_arr
-        == Decimal(
-            "0"
-        )
-    )
-
-
-# ============================================================
-# BUSINESS INPUT MAPPING
-# ============================================================
-
-
-def test_build_business_match_input():
-    business = (
+    repository.get_candidate_buyers(
         make_business()
     )
 
-    result = (
-        build_business_match_input(
-            business
+    statement = captured_statement(session)
+
+    assert (
+        "buyer_preferences.target_industries IS NULL"
+        in where_sql(statement)
+    )
+
+
+def test_candidate_buyers_filters_business_state():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
+        make_business(
+            state="Texas",
+            city=None,
         )
     )
 
-    assert (
-        result.business_id
-        == business.id
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    assert any(
+        value == [{"state": "Texas"}]
+        for value in params.values()
     )
 
-    assert (
-        result.industry
-        == "HVAC"
-    )
 
-    assert (
-        result.state
-        == "Florida"
-    )
+def test_candidate_buyers_filters_business_city():
+    repository, session = make_repository()
 
-    assert (
-        result.asking_price
-        == Decimal(
-            "500000"
+    repository.get_candidate_buyers(
+        make_business(
+            state="Texas",
+            city="Austin",
         )
     )
 
-    assert (
-        result.sde
-        == Decimal(
-            "200000"
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    assert any(
+        value == [
+            {
+                "state": "Texas",
+                "city": "Austin",
+            }
+        ]
+        for value in params.values()
+    )
+
+
+def test_candidate_buyers_does_not_use_county():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
+        make_business(
+            county="Travis"
         )
     )
 
-    assert (
-        result.arr
-        == Decimal(
-            "500000"
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    where = where_sql(statement)
+
+    assert "county" not in where
+
+    assert not any(
+        "Travis" in str(value)
+        for value in params.values()
+    )
+
+
+def test_candidate_buyers_reverse_price_tolerance():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
+        make_business(
+            asking_price=Decimal("1150000")
         )
     )
 
-    assert (
-        result.owner_hours
-        == 20.0
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    assert Decimal("1E+6") in params.values()
+
+
+def test_candidate_buyers_allows_unlimited_budget():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
+        make_business(
+            asking_price=Decimal("1000000")
+        )
     )
 
-    assert (
-        result.transition_training_days
-        == 30.0
-    )
+    statement = captured_statement(session)
 
     assert (
-        result.deal_preference
-        == "cash"
-    )
-
-    assert (
-        result.largest_customer_percent
-        == 20.0
-    )
-
-    assert (
-        result.years_in_operation
-        == 10
+        "maximum_purchase_price IS NULL"
+        in where_sql(statement)
     )
 
 
-def test_business_missing_arr_fails():
-    business = (
+def test_candidate_buyers_unknown_business_price_does_not_apply_budget_filter():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
+        make_business(
+            asking_price=None
+        )
+    )
+
+    statement = captured_statement(session)
+
+    assert (
+        "maximum_purchase_price >="
+        not in where_sql(statement)
+    )
+
+
+# ============================================================
+# RELATIONSHIP LIFECYCLE
+# ============================================================
+
+
+def test_candidate_buyers_excludes_non_rerankable_relationships():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
         make_business()
     )
 
-    business.arr = None
+    statement = captured_statement(session)
 
-    with pytest.raises(
-        MatchingDataIncompleteError
-    ):
-        build_business_match_input(
-            business
-        )
+    where = where_sql(statement)
+
+    assert "EXISTS" in where
+    assert "matches" in where.lower()
+    assert "NOT IN" in where
 
 
-def test_business_missing_customer_concentration_fails():
-    business = (
+def test_candidate_buyers_keeps_matched_relationship_rerankable():
+    repository, session = make_repository()
+
+    repository.get_candidate_buyers(
         make_business()
     )
 
-    business.customer_concentration = (
-        None
+    statement = captured_statement(session)
+    _, params = compile_statement(statement)
+
+    parameter_collections = [
+        value
+        for value in params.values()
+        if isinstance(value, (list, tuple, set))
+    ]
+
+    assert any(
+        MatchStatus.MATCHED in value
+        or MatchStatus.MATCHED.value in value
+        for value in parameter_collections
     )
-
-    with pytest.raises(
-        MatchingDataIncompleteError
-    ):
-        build_business_match_input(
-            business
-        )
-
 
 # ============================================================
-# SCORE BREAKDOWN
-# ============================================================
-
-
-def test_score_breakdown_contains_explainability_data():
-    evaluation = (
-        make_evaluation()
-    )
-
-    breakdown = (
-        build_score_breakdown(
-            evaluation
-        )
-    )
-
-    assert (
-        breakdown[
-            "matching_version"
-        ]
-        == "v1"
-    )
-
-    assert (
-        breakdown[
-            "eligible"
-        ]
-        is True
-    )
-
-    assert (
-        breakdown[
-            "score"
-        ]
-        == pytest.approx(
-            0.855
-        )
-    )
-
-    assert (
-        "purchase_price"
-        in breakdown[
-            "dimensions"
-        ]
-    )
-
-    assert (
-        breakdown[
-            "dimensions"
-        ][
-            "purchase_price"
-        ][
-            "contribution"
-        ]
-        == pytest.approx(
-            0.24
-        )
-    )
-
-
-# ============================================================
-# EXISTING MATCH
+# RETURN BEHAVIOUR
 # ============================================================
 
 
-def test_get_existing_match_returns_session_result():
-    session = Mock()
+def test_candidate_businesses_returns_scalars_as_list():
+    repository, session = make_repository()
 
-    existing = Mock(
-        spec=Match
+    business_1 = make_business()
+    business_2 = make_business()
+
+    session.scalars.return_value.all.return_value = [
+        business_1,
+        business_2,
+    ]
+
+    result = repository.get_candidate_businesses(
+        make_preferences()
     )
 
-    session.scalar.return_value = (
-        existing
+    assert result == [
+        business_1,
+        business_2,
+    ]
+
+
+def test_candidate_buyers_returns_scalars_as_list():
+    repository, session = make_repository()
+
+    buyer_1 = MagicMock()
+    buyer_2 = MagicMock()
+
+    session.scalars.return_value.all.return_value = [
+        buyer_1,
+        buyer_2,
+    ]
+
+    result = repository.get_candidate_buyers(
+        make_business()
     )
 
-    result = get_existing_match(
-        session,
-        uuid4(),
-        uuid4(),
-    )
-
-    assert (
-        result
-        is existing
-    )
-
-    session.scalar.assert_called_once()
-
-
-# ============================================================
-# UPSERT
-# ============================================================
-
-
-def test_upsert_creates_new_match():
-    session = Mock()
-
-    session.scalar.return_value = (
-        None
-    )
-
-    evaluation = (
-        make_evaluation()
-    )
-
-    result = (
-        upsert_match(
-            session,
-            evaluation,
-        )
-    )
-
-    assert isinstance(
-        result,
-        Match,
-    )
-
-    assert (
-        result.buyer_id
-        == evaluation.buyer_id
-    )
-
-    assert (
-        result.business_id
-        == evaluation.business_id
-    )
-
-    assert (
-        result.score
-        == Decimal(
-            "0.855"
-        )
-    )
-
-    assert (
-        result.matching_version
-        == "v1"
-    )
-
-    assert (
-        result.price_score
-        == Decimal(
-            "0.8"
-        )
-    )
-
-    assert (
-        result.arr_score
-        == Decimal(
-            "0.8"
-        )
-    )
-
-    assert (
-        result.customer_concentration_score
-        == Decimal(
-            "0.5"
-        )
-    )
-
-    assert (
-        result.price_contribution
-        == Decimal(
-            "0.24"
-        )
-    )
-
-    assert (
-        result.arr_contribution
-        == Decimal(
-            "0.04"
-        )
-    )
-
-    assert (
-        result.customer_concentration_contribution
-        == Decimal(
-            "0.025"
-        )
-    )
-
-    session.add.assert_called_once_with(
-        result
-    )
-
-    session.flush.assert_called_once()
-
-
-def test_upsert_updates_existing_match_without_duplicate():
-    session = Mock()
-
-    buyer_id = uuid4()
-
-    business_id = uuid4()
-
-    existing = Match(
-        id=uuid4(),
-
-        buyer_id=(
-            buyer_id
-        ),
-
-        business_id=(
-            business_id
-        ),
-
-        score=Decimal(
-            "0.50"
-        ),
-
-        matching_version="v1",
-    )
-
-    session.scalar.return_value = (
-        existing
-    )
-
-    evaluation = (
-        make_evaluation(
-            buyer_id=(
-                buyer_id
-            ),
-            business_id=(
-                business_id
-            ),
-            score=0.855,
-        )
-    )
-
-    result = (
-        upsert_match(
-            session,
-            evaluation,
-        )
-    )
-
-    assert (
-        result
-        is existing
-    )
-
-    assert (
-        result.score
-        == Decimal(
-            "0.855"
-        )
-    )
-
-    assert (
-        result.price_score
-        == Decimal(
-            "0.8"
-        )
-    )
-
-    assert (
-        result.matching_version
-        == "v1"
-    )
-
-    session.add.assert_not_called()
-
-    session.flush.assert_called_once()
-
-
-def test_ineligible_evaluation_is_not_persisted():
-    session = Mock()
-
-    evaluation = MatchEvaluation(
-        buyer_id=uuid4(),
-
-        business_id=uuid4(),
-
-        eligible=False,
-
-        failed_constraints=[
-            "industry",
-        ],
-
-        score=None,
-
-        percentage=None,
-
-        dimensions={},
-
-        meets_threshold=False,
-    )
-
-    with pytest.raises(
-        MatchingRepositoryError
-    ):
-        upsert_match(
-            session,
-            evaluation,
-        )
-
-    session.add.assert_not_called()
-
-
-def test_match_score_breakdown_is_persisted():
-    session = Mock()
-
-    session.scalar.return_value = (
-        None
-    )
-
-    evaluation = (
-        make_evaluation()
-    )
-
-    result = (
-        upsert_match(
-            session,
-            evaluation,
-        )
-    )
-
-    assert (
-        result.score_breakdown[
-            "matching_version"
-        ]
-        == "v1"
-    )
-
-    assert (
-        "arr"
-        in result.score_breakdown[
-            "dimensions"
-        ]
-    )
-
-    assert (
-        "customer_concentration"
-        in result.score_breakdown[
-            "dimensions"
-        ]
-    )
-
-
-def test_upsert_does_not_commit_transaction():
-    session = Mock()
-
-    session.scalar.return_value = (
-        None
-    )
-
-    evaluation = (
-        make_evaluation()
-    )
-
-    upsert_match(
-        session,
-        evaluation,
-    )
-
-    session.commit.assert_not_called()
-
-    session.flush.assert_called_once()
+    assert result == [
+        buyer_1,
+        buyer_2,
+    ]

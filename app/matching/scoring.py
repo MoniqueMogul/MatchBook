@@ -1,167 +1,158 @@
-from dataclasses import dataclass
 from decimal import Decimal
 
+from app.db.db_enum import DealPreference
 from app.matching.config import (
     DEAL_COMPATIBILITY,
     PRICE_TOLERANCE,
     SCORING_WEIGHTS,
 )
+from app.matching.schemas import (
+    BusinessMatchInput,
+    BuyerMatchInput,
+    DimensionScore,
+    MatchEvaluation,
+)
 
 
-@dataclass(frozen=True)
-class MatchScoreResult:
+# ============================================================
+# HELPERS
+# ============================================================
+
+
+def _clamp(value: float) -> float:
     """
-    Complete deterministic V1 scoring result.
+    Force a score into the valid 0.0 -> 1.0 range.
     """
 
-    industry_score: float
-    geography_score: float
-    price_score: float
-    sde_score: float
-    owner_involvement_score: float
-    training_score: float
-    deal_score: float
-    arr_score: float
-    customer_concentration_score: float
-
-    industry_contribution: float
-    geography_contribution: float
-    price_contribution: float
-    sde_contribution: float
-    owner_involvement_contribution: float
-    training_contribution: float
-    deal_contribution: float
-    arr_contribution: float
-    customer_concentration_contribution: float
-
-    match_score: float
-    match_percentage: float
-
-
-def _clamp_score(value: float) -> float:
-    """
-    Keep a compatibility score between 0.0 and 1.0.
-    """
     return max(0.0, min(1.0, value))
 
 
-# ============================================================
-# INDUSTRY
-# ============================================================
-
-
-def calculate_industry_score(
-    industry_matches: bool,
+def _score_minimum_preferred(
+    *,
+    actual: Decimal,
+    minimum: Decimal | None,
+    preferred: Decimal | None,
 ) -> float:
     """
-    V1 Industry score.
+    Score a value where higher is better.
 
-    Industry is primarily a hard-filter dimension in V1.
+    Used for SDE and ARR.
 
-    Match:
-        1.00
+    Rules:
+        actual < minimum:
+            0.0
 
-    No match:
-        0.00
+        actual >= preferred:
+            1.0
 
-    V1 scoring weight is currently 0%.
+        between minimum and preferred:
+            linear score between 0.0 and 1.0
+
+        only minimum exists:
+            meeting minimum = 1.0
+
+        only preferred exists:
+            score proportionally toward preferred.
     """
-    return 1.0 if industry_matches else 0.0
 
-
-# ============================================================
-# GEOGRAPHY
-# ============================================================
-
-
-def calculate_geography_score(
-    geography_matches: bool,
-) -> float:
-    """
-    V1 Geography score.
-
-    Geography is deterministic in V1.
-
-    Match:
-        1.00
-
-    No match:
-        0.00
-
-    V1 scoring weight is currently 0%.
-    """
-    return 1.0 if geography_matches else 0.0
-
-
-# ============================================================
-# PURCHASE PRICE
-# ============================================================
-
-
-def calculate_price_score(
-    maximum_purchase_price: Decimal,
-    seller_price: Decimal,
-    price_tolerance: float = PRICE_TOLERANCE,
-) -> float:
-    """
-    Calculate V1 purchase-price compatibility.
-
-    If:
-        Seller Price <= Buyer Maximum Price
-    then:
-        Price Score = 1.00
-
-    If:
-        Buyer Maximum Price < Seller Price <= Absolute Ceiling
-    then:
-        Price Score =
-            1 - (
-                (Seller Price - Maximum Price)
-                /
-                (Maximum Price * Price Tolerance)
-            )
-
-    Seller prices above the absolute ceiling should already have
-    been rejected by the eligibility layer. If one reaches this
-    function anyway, its compatibility score is 0.00.
-    """
-    if maximum_purchase_price <= 0:
-        raise ValueError(
-            "maximum_purchase_price must be greater than zero"
-        )
-
-    if seller_price < 0:
-        raise ValueError(
-            "seller_price cannot be negative"
-        )
-
-    tolerance = Decimal(str(price_tolerance))
-
-    if tolerance <= 0:
-        raise ValueError(
-            "price_tolerance must be greater than zero"
-        )
-
-    if seller_price <= maximum_purchase_price:
-        return 1.0
-
-    tolerance_amount = (
-        maximum_purchase_price * tolerance
-    )
-
-    absolute_ceiling = (
-        maximum_purchase_price + tolerance_amount
-    )
-
-    if seller_price > absolute_ceiling:
+    if minimum is not None and actual < minimum:
         return 0.0
 
-    score = Decimal("1") - (
-        (seller_price - maximum_purchase_price)
-        / tolerance_amount
+    if preferred is not None:
+        if actual >= preferred:
+            return 1.0
+
+        if minimum is not None:
+            difference = preferred - minimum
+
+            if difference <= 0:
+                raise ValueError(
+                    "preferred must be greater than minimum."
+                )
+
+            return _clamp(
+                float(
+                    (actual - minimum)
+                    / difference
+                )
+            )
+
+        if preferred <= 0:
+            return 1.0
+
+        return _clamp(
+            float(actual / preferred)
+        )
+
+    if minimum is not None:
+        return 1.0
+
+    raise ValueError(
+        "At least one preference must be supplied."
+    )
+# ============================================================
+# PRICE
+# ============================================================
+
+
+def score_price(
+        *,
+        maximum_price: Decimal | None,
+        asking_price: Decimal | None,
+) -> float | None:
+    """
+    Score purchase-price compatibility.
+
+    Price is only applicable when:
+        - buyer specified a maximum price
+        - business has an asking price
+
+    At or below the buyer's maximum:
+        1.0
+
+    Between maximum and tolerance ceiling:
+        score falls linearly from 1.0 -> 0.0
+
+    Above tolerance:
+        should already have been removed by the repository.
+    """
+
+    if (
+            maximum_price is None
+            or asking_price is None
+    ):
+        return None
+
+    if asking_price <= maximum_price:
+        return 1.0
+
+    tolerance = Decimal(
+        str(PRICE_TOLERANCE)
     )
 
-    return _clamp_score(float(score))
+    ceiling = (
+            maximum_price
+            * (Decimal("1") + tolerance)
+    )
+
+    if asking_price >= ceiling:
+        return 0.0
+
+    tolerance_range = ceiling - maximum_price
+
+    if tolerance_range <= 0:
+        return 0.0
+
+    amount_over = (
+            asking_price - maximum_price
+    )
+
+    return _clamp(
+        1.0
+        - float(
+            amount_over / tolerance_range
+        )
+    )
 
 
 # ============================================================
@@ -169,107 +160,86 @@ def calculate_price_score(
 # ============================================================
 
 
-def calculate_sde_score(
-    minimum_sde: Decimal,
-    preferred_sde: Decimal,
-    seller_sde: Decimal,
-) -> float:
-    """
-    Calculate V1 SDE compatibility.
+def score_sde(
+        *,
+        minimum_sde: Decimal | None,
+        preferred_sde: Decimal | None,
+        business_sde: Decimal | None,
+) -> float | None:
+    if (
+            minimum_sde is None
+            or preferred_sde is None
+            or business_sde is None
+    ):
+        return None
 
-    Seller SDE >= Preferred SDE:
-        1.00
-
-    Minimum SDE <= Seller SDE < Preferred SDE:
-        (Seller SDE - Minimum SDE)
-        /
-        (Preferred SDE - Minimum SDE)
-
-    Seller SDE below Minimum SDE should already have been rejected
-    by eligibility. If supplied here, score is 0.00.
-    """
-    if minimum_sde < 0:
-        raise ValueError(
-            "minimum_sde cannot be negative"
-        )
-
-    if preferred_sde < minimum_sde:
-        raise ValueError(
-            "preferred_sde cannot be below minimum_sde"
-        )
-
-    if seller_sde < minimum_sde:
-        return 0.0
-
-    if seller_sde >= preferred_sde:
-        return 1.0
-
-    # If minimum and preferred are equal, the earlier conditions
-    # fully determine the result.
-    if preferred_sde == minimum_sde:
-        return 1.0
-
-    score = (
-        (seller_sde - minimum_sde)
-        /
-        (preferred_sde - minimum_sde)
+    return _score_minimum_preferred(
+        actual=business_sde,
+        minimum=minimum_sde,
+        preferred=preferred_sde,
     )
 
-    return _clamp_score(float(score))
 
+# ============================================================
+# ARR
+# ============================================================
+
+
+def score_arr(
+    *,
+    minimum_arr: Decimal | None,
+    preferred_arr: Decimal | None,
+    business_arr: Decimal | None,
+) -> float | None:
+
+    if (
+        minimum_arr is None
+        or preferred_arr is None
+        or business_arr is None
+    ):
+        return None
+
+    return _score_minimum_preferred(
+        actual=business_arr,
+        minimum=minimum_arr,
+        preferred=preferred_arr,
+    )
 
 # ============================================================
 # OWNER INVOLVEMENT
 # ============================================================
 
 
-def calculate_owner_involvement_score(
-    buyer_preferred_hours: float,
-    seller_owner_hours: float,
-) -> float:
+def score_owner_involvement(
+        *,
+        preferred_hours: int | None,
+        actual_hours: int | None,
+) -> float | None:
     """
-    Calculate V1 owner-involvement compatibility.
+    Lower owner involvement is better.
 
-    Seller Hours <= Buyer Preferred Hours:
-        1.00
+    At or below buyer preference:
+        1.0
 
-    Seller Hours > Buyer Preferred Hours:
-        1 - (
-            (Seller Hours - Buyer Preferred Hours)
-            /
-            Buyer Preferred Hours
-        )
-
-    Result is capped between 0.00 and 1.00.
+    Above preference:
+        score falls proportionally.
     """
-    if buyer_preferred_hours < 0:
-        raise ValueError(
-            "buyer_preferred_hours cannot be negative"
-        )
 
-    if seller_owner_hours < 0:
-        raise ValueError(
-            "seller_owner_hours cannot be negative"
-        )
+    if (
+            preferred_hours is None
+            or actual_hours is None
+    ):
+        return None
 
-    if seller_owner_hours <= buyer_preferred_hours:
+    if actual_hours <= preferred_hours:
         return 1.0
 
-    # The document's formula uses buyer preferred hours as the
-    # denominator. When preference is zero, any positive seller
-    # requirement is incompatible.
-    if buyer_preferred_hours == 0:
-        return 0.0
+    if actual_hours == 0:
+        return 1.0
 
-    score = 1.0 - (
-        (
-            seller_owner_hours
-            - buyer_preferred_hours
-        )
-        / buyer_preferred_hours
+    return _clamp(
+        preferred_hours / actual_hours
     )
-
-    return _clamp_score(score)
 
 
 # ============================================================
@@ -277,52 +247,36 @@ def calculate_owner_involvement_score(
 # ============================================================
 
 
-def calculate_training_score(
-    buyer_required_training_days: float,
-    seller_offered_training_days: float,
-) -> float:
+def score_transition_training(
+        *,
+        required_days: int | None,
+        available_days: int | None,
+) -> float | None:
     """
-    Calculate V1 transition-training compatibility.
+    More available seller training is better.
 
-    Seller Training >= Buyer Required Training:
-        1.00
+    Available >= required:
+        1.0
 
-    0 < Seller Training < Buyer Required Training:
-        Seller Training / Buyer Required Training
-
-    Seller Training == 0:
-        0.00
+    Otherwise:
+        proportional partial score.
     """
-    if buyer_required_training_days < 0:
-        raise ValueError(
-            "buyer_required_training_days cannot be negative"
-        )
 
-    if seller_offered_training_days < 0:
-        raise ValueError(
-            "seller_offered_training_days cannot be negative"
-        )
-
-    # If the buyer requires no training, the requirement is
-    # automatically satisfied.
-    if buyer_required_training_days == 0:
-        return 1.0
-
-    if seller_offered_training_days >= (
-        buyer_required_training_days
+    if (
+            required_days is None
+            or available_days is None
     ):
+        return None
+
+    if required_days == 0:
         return 1.0
 
-    if seller_offered_training_days == 0:
-        return 0.0
+    if available_days >= required_days:
+        return 1.0
 
-    score = (
-        seller_offered_training_days
-        /
-        buyer_required_training_days
+    return _clamp(
+        available_days / required_days
     )
-
-    return _clamp_score(score)
 
 
 # ============================================================
@@ -330,81 +284,33 @@ def calculate_training_score(
 # ============================================================
 
 
-def calculate_deal_score(
-    buyer_preference: str,
-    seller_preference: str,
-) -> float:
+def score_deal_preference(
+        *,
+        buyer_preference: DealPreference | None,
+        business_preference: DealPreference | None,
+) -> float | None:
     """
-    Calculate V1 categorical deal compatibility using the
-    configured compatibility table.
+    Score compatibility between the buyer's preferred deal
+    structure and the seller's preferred deal structure.
+
+    None means the dimension is not applicable.
+
+    Compatibility values are defined centrally in
+    DEAL_COMPATIBILITY.
     """
-    buyer = buyer_preference.strip().lower()
-    seller = seller_preference.strip().lower()
 
-    key = (buyer, seller)
+    if (
+            buyer_preference is None
+            or business_preference is None
+    ):
+        return None
 
-    if key not in DEAL_COMPATIBILITY:
-        raise ValueError(
-            "Unsupported deal preference combination: "
-            f"{buyer_preference!r}, "
-            f"{seller_preference!r}"
-        )
-
-    return DEAL_COMPATIBILITY[key]
-
-
-# ============================================================
-# ARR / RECURRING REVENUE
-# ============================================================
-
-
-def calculate_arr_score(
-    minimum_arr: Decimal,
-    preferred_arr: Decimal,
-    seller_arr: Decimal,
-) -> float:
-    """
-    Calculate V1 ARR / recurring-revenue compatibility.
-
-    Seller ARR >= Preferred ARR:
-        1.00
-
-    Minimum ARR <= Seller ARR < Preferred ARR:
-        (Seller ARR - Minimum ARR)
-        /
-        (Preferred ARR - Minimum ARR)
-
-    Seller ARR < Minimum ARR:
-        0.00
-
-    ARR is a soft scoring dimension in V1.
-    """
-    if minimum_arr < 0:
-        raise ValueError(
-            "minimum_arr cannot be negative"
-        )
-
-    if preferred_arr < minimum_arr:
-        raise ValueError(
-            "preferred_arr cannot be below minimum_arr"
-        )
-
-    if seller_arr < minimum_arr:
-        return 0.0
-
-    if seller_arr >= preferred_arr:
-        return 1.0
-
-    if preferred_arr == minimum_arr:
-        return 1.0
-
-    score = (
-        (seller_arr - minimum_arr)
-        /
-        (preferred_arr - minimum_arr)
+    key = (
+        buyer_preference.value,
+        business_preference.value,
     )
 
-    return _clamp_score(float(score))
+    return DEAL_COMPATIBILITY[key]
 
 
 # ============================================================
@@ -412,148 +318,144 @@ def calculate_arr_score(
 # ============================================================
 
 
-def calculate_customer_concentration_score(
-    buyer_accepts_above_25_percent: bool,
-    seller_largest_customer_percent: float,
-) -> float:
+def score_customer_concentration(
+        *,
+        accepts_above_25_percent: bool | None,
+        concentration: Decimal | None,
+) -> float | None:
     """
-    Calculate V1 customer-concentration compatibility.
+    Score buyer tolerance for customer concentration.
 
-    Buyer accepts concentration above 25%:
-        1.00 regardless of seller concentration.
+    None:
+        buyer did not specify a preference
 
-    Buyer does not accept >25% AND seller <=25%:
-        1.00
+    True:
+        buyer accepts concentration above 25%
 
-    Buyer does not accept >25% AND seller >25%:
-        0.50
+    False:
+        buyer prefers concentration <= 25%
     """
+
     if (
-        seller_largest_customer_percent < 0
-        or seller_largest_customer_percent > 100
+            accepts_above_25_percent is None
+            or concentration is None
     ):
-        raise ValueError(
-            "seller_largest_customer_percent "
-            "must be between 0 and 100"
-        )
+        return None
 
-    if buyer_accepts_above_25_percent:
+    if accepts_above_25_percent:
         return 1.0
 
-    if seller_largest_customer_percent <= 25:
+    if concentration <= Decimal("25"):
         return 1.0
 
-    return 0.5
+    return 0.0
 
 
 # ============================================================
-# FINAL WEIGHTED MATCH SCORE
+# COMPLETE MATCH SCORE
 # ============================================================
 
 
-def calculate_match_score(
-    *,
-    industry_score: float,
-    geography_score: float,
-    price_score: float,
-    sde_score: float,
-    owner_involvement_score: float,
-    training_score: float,
-    deal_score: float,
-    arr_score: float,
-    customer_concentration_score: float,
-) -> MatchScoreResult:
+def score_candidate(
+        *,
+        buyer: BuyerMatchInput,
+        business: BusinessMatchInput,
+) -> MatchEvaluation:
     """
-    Apply V1 configured weights and return the complete,
-    explainable deterministic match result.
+    Calculate deterministic FIT score for one buyer/business pair.
+
+    Only applicable dimensions participate in the final score.
+
+    Missing optional data does not automatically become a zero.
     """
 
-    scores = {
-        "industry": _clamp_score(industry_score),
-        "geography": _clamp_score(geography_score),
-        "purchase_price": _clamp_score(price_score),
-        "sde": _clamp_score(sde_score),
-        "owner_involvement": _clamp_score(
-            owner_involvement_score
+    raw_scores: dict[str, float | None] = {
+        "purchase_price": score_price(
+            maximum_price=buyer.maximum_purchase_price,
+            asking_price=business.asking_price,
         ),
-        "transition_training": _clamp_score(
-            training_score
+
+        "sde": score_sde(
+            minimum_sde=buyer.minimum_sde,
+            preferred_sde=buyer.preferred_sde,
+            business_sde=business.sde,
         ),
-        "deal_preference": _clamp_score(
-            deal_score
+
+        "arr": score_arr(
+            minimum_arr=buyer.minimum_arr,
+            preferred_arr=buyer.preferred_arr,
+            business_arr=business.arr,
         ),
-        "arr": _clamp_score(arr_score),
-        "customer_concentration": _clamp_score(
-            customer_concentration_score
+
+        "owner_involvement": score_owner_involvement(
+            preferred_hours=buyer.preferred_owner_hours,
+            actual_hours=business.owner_hours,
+        ),
+
+        "transition_training": score_transition_training(
+            required_days=buyer.required_training_days,
+            available_days=business.transition_training_days,
+        ),
+
+        "deal_preference": score_deal_preference(
+            buyer_preference=buyer.deal_preference,
+            business_preference=business.deal_preference,
+        ),
+
+        "customer_concentration": score_customer_concentration(
+            accepts_above_25_percent=(
+                buyer.accepts_customer_concentration_above_25_percent
+            ),
+            concentration=business.customer_concentration,
         ),
     }
 
-    contributions = {
-        dimension: (
-            score * SCORING_WEIGHTS[dimension]
+    applicable_scores = {
+        name: score
+        for name, score in raw_scores.items()
+        if score is not None
+    }
+
+    if any(score is None for score in raw_scores.values()):
+        return MatchEvaluation(
+            buyer_id=buyer.buyer_id,
+            business_id=business.business_id,
+            score=0.0,
+            dimensions={},
         )
-        for dimension, score in scores.items()
-    }
 
-    match_score = sum(
-        contributions.values()
+    total_applicable_weight = sum(
+        SCORING_WEIGHTS[name]
+        for name in applicable_scores
     )
 
-    # Prevent floating-point artifacts such as
-    # 0.8549999999999999.
-    match_score = round(match_score, 10)
-    match_percentage = round(
-        match_score * 100,
-        2,
-    )
+    dimensions: dict[str, DimensionScore] = {}
 
-    return MatchScoreResult(
-        industry_score=scores["industry"],
-        geography_score=scores["geography"],
-        price_score=scores["purchase_price"],
-        sde_score=scores["sde"],
-        owner_involvement_score=scores[
-            "owner_involvement"
-        ],
-        training_score=scores[
-            "transition_training"
-        ],
-        deal_score=scores["deal_preference"],
-        arr_score=scores["arr"],
-        customer_concentration_score=scores[
-            "customer_concentration"
-        ],
+    final_score = 0.0
 
-        industry_contribution=contributions[
-            "industry"
-        ],
-        geography_contribution=contributions[
-            "geography"
-        ],
-        price_contribution=contributions[
-            "purchase_price"
-        ],
-        sde_contribution=contributions[
-            "sde"
-        ],
-        owner_involvement_contribution=contributions[
-            "owner_involvement"
-        ],
-        training_contribution=contributions[
-            "transition_training"
-        ],
-        deal_contribution=contributions[
-            "deal_preference"
-        ],
-        arr_contribution=contributions[
-            "arr"
-        ],
-        customer_concentration_contribution=(
-            contributions[
-                "customer_concentration"
-            ]
-        ),
+    for name, score in applicable_scores.items():
+        original_weight = SCORING_WEIGHTS[name]
 
-        match_score=match_score,
-        match_percentage=match_percentage,
+        normalized_weight = (
+                original_weight
+                / total_applicable_weight
+        )
+
+        contribution = (
+                score * normalized_weight
+        )
+
+        dimensions[name] = DimensionScore(
+            score=score,
+            weight=normalized_weight,
+            contribution=contribution,
+        )
+
+        final_score += contribution
+
+    return MatchEvaluation(
+        buyer_id=buyer.buyer_id,
+        business_id=business.business_id,
+        score=_clamp(final_score),
+        dimensions=dimensions,
     )

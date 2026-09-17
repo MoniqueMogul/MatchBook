@@ -158,37 +158,37 @@ class ChatRepository:
         return message
 
 
-def list_user_conversations(
-    self,
-    user_id: UUID,
-) -> list[Conversation]:
-    statement = (
-        select(Conversation)
-        .join(
-            Match,
-            Conversation.match_id == Match.id,
+    def list_user_conversations(
+        self,
+        user_id: UUID,
+    ) -> list[Conversation]:
+        statement = (
+            select(Conversation)
+            .join(
+                Match,
+                Conversation.match_id == Match.id,
+            )
+            .join(
+                BuyerProfile,
+                Match.buyer_id == BuyerProfile.id,
+            )
+            .join(
+                Business,
+                Match.business_id == Business.id,
+            )
+            .join(
+                SellerProfile,
+                Business.seller_id == SellerProfile.id,
+            )
+            .where(
+                (BuyerProfile.user_id == user_id)
+                | (SellerProfile.user_id == user_id)
+            )
+            .order_by(
+                Conversation.updated_at.desc()
+            )
         )
-        .join(
-            BuyerProfile,
-            Match.buyer_id == BuyerProfile.id,
-        )
-        .join(
-            Business,
-            Match.business_id == Business.id,
-        )
-        .join(
-            SellerProfile,
-            Business.seller_id == SellerProfile.id,
-        )
-        .where(
-            (BuyerProfile.user_id == user_id)
-            | (SellerProfile.user_id == user_id)
-        )
-        .order_by(
-            Conversation.updated_at.desc()
-        )
-    )
 
-    return list(
-        self.session.scalars(statement).all()
-    )
+        return list(
+            self.session.scalars(statement).all()
+        )

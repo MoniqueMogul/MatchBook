@@ -318,7 +318,7 @@ class BuyerPreferences(Base):
         nullable=True,
     )
 
-    target_locations: Mapped[dict | None] = mapped_column(
+    target_locations: Mapped[list | None] = mapped_column(
         JSONB,
         nullable=True,
     )
@@ -443,6 +443,19 @@ class BuyerPreferences(Base):
     # --------------------------------------------------------
 
     __table_args__ = (
+
+        Index(
+        "ix_buyer_preferences_target_industries_gin",
+        "target_industries",
+        postgresql_using="gin",
+        ),
+
+        Index(
+            "ix_buyer_preferences_target_locations_gin",
+            "target_locations",
+            postgresql_using="gin",
+        ),
+
         CheckConstraint(
             "maximum_purchase_price IS NULL "
             "OR maximum_purchase_price >= 0",
@@ -1000,6 +1013,25 @@ class Business(Base):
         CheckConstraint(
             "number_of_routes IS NULL OR number_of_routes >= 0",
             name="ck_business_routes_nonnegative",
+        ),
+
+        Index(
+            "ix_business_matching_location",
+            "status",
+            "state",
+            "city",
+        ),
+
+        Index(
+            "ix_business_matching_industry",
+            "status",
+            "industry",
+        ),
+
+        Index(
+            "ix_business_matching_price",
+            "status",
+            "asking_price",
         ),
     )
 
