@@ -23,12 +23,19 @@ from app.chat.service import (
 from app.events.tasks import send_outbox_event
 from app.notification.depenencies import get_db_session
 
+from app.chat.ai_chat_assistant.route import (
+    router as ai_chat_assistant_router,
+)
+
 
 router = APIRouter(
     prefix="/chat",
     tags=["chat"],
 )
 
+router.include_router(
+    ai_chat_assistant_router,
+)
 
 @router.get(
     "/conversations",

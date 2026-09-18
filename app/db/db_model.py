@@ -2104,3 +2104,144 @@ class Declaration(Base):
         back_populates="declaration",
         uselist=False,
     )
+
+
+# ============================================================
+# AI CHAT GENERATION
+# ============================================================
+
+
+class AIChatGeneration(Base):
+    """
+    Observability record for one AI chat-assistant generation.
+
+    This records how a suggestion was generated without storing
+    the full prompt, buyer/business context, or generated message.
+    """
+
+    __tablename__ = "ai_chat_generations"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    # --------------------------------------------------------
+    # Generation Context
+    # --------------------------------------------------------
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    match_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("matches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # --------------------------------------------------------
+    # Model + Prompt
+    # --------------------------------------------------------
+
+    model: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+    )
+
+    prompt_version: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
+
+    # --------------------------------------------------------
+    # Performance / Cost Observability
+    # --------------------------------------------------------
+
+    latency_ms: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    input_tokens: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    output_tokens: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # --------------------------------------------------------
+    # Result
+    # --------------------------------------------------------
+
+    success: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+    )
+
+    error_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # --------------------------------------------------------
+    # Timestamp
+    # --------------------------------------------------------
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
+    user: Mapped["User"] = relationship()
+
+    conversation: Mapped["Conversation"] = relationship()
+
+    match: Mapped["Match"] = relationship()
+
+    # --------------------------------------------------------
+    # Indexes
+    # --------------------------------------------------------
+
+    __table_args__ = (
+        Index(
+            "ix_ai_chat_generations_prompt_created",
+            "prompt_version",
+            "created_at",
+        ),
+        Index(
+            "ix_ai_chat_generations_model_created",
+            "model",
+            "created_at",
+        ),
+        Index(
+            "ix_ai_chat_generations_success_created",
+            "success",
+            "created_at",
+        ),
+    )
