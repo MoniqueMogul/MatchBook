@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.chat.ai_chat_assistant.llm import AIIntroductionLLM, AIIntroductionGenerationError
+from app.chat.ai_chat_assistant.rate_limit import AIChatRateLimiter
 from app.chat.ai_chat_assistant.repository import (
     AIAssistedChatRepository,
 )
@@ -14,7 +15,8 @@ from app.chat.ai_chat_assistant.schema import (
     AIMatchContext,
     AIMatchDimension, AIIntroductionResponse, AIIntroductionRequest,
 )
-from app.chat.repository import ChatRepository
+from app.core.redis import redis_client
+
 from app.db.db_model import (
     Business,
     BuyerPreferences,
@@ -43,20 +45,17 @@ class AIAssistedChatService:
     def __init__(
             self,
             session: Session,
-            *,
-            llm: AIIntroductionLLM | None = None,
+            rate_limiter: AIChatRateLimiter,
     ) -> None:
         self.session = session
+        self.repository = AIAssistedChatRepository(session)
+        self.llm = AIIntroductionLLM()
+        self.rate_limiter = rate_limiter
 
-        self.repository = AIAssistedChatRepository(
-            session
-        )
 
-        self.llm = llm or AIIntroductionLLM()
-
-    # ========================================================
-    # BUILD INTRODUCTION CONTEXT
-    # ========================================================
+# ========================================================
+# BUILD INTRODUCTION CONTEXT
+# ========================================================
 
     def build_introduction_context(
             self,
@@ -112,6 +111,7 @@ class AIAssistedChatService:
             match=match_context,
         )
 
+
     # ========================================================
     # ACCESS
     # ========================================================
@@ -136,6 +136,7 @@ class AIAssistedChatService:
             raise PermissionError(
                 "You do not have access to this conversation."
             )
+
 
     # ========================================================
     # SENDER ROLE
@@ -162,6 +163,7 @@ class AIAssistedChatService:
         raise PermissionError(
             "User does not belong to this match."
         )
+
 
     # ========================================================
     # BUYER CONTEXT
@@ -218,6 +220,7 @@ class AIAssistedChatService:
             ),
         )
 
+
     # ========================================================
     # BUSINESS CONTEXT
     # ========================================================
@@ -266,6 +269,7 @@ class AIAssistedChatService:
                 business.preferred_sale_timeline
             ),
         )
+
 
     # ========================================================
     # MATCH CONTEXT
@@ -352,6 +356,7 @@ class AIAssistedChatService:
             matching_version=match.matching_version,
         )
 
+
     # ========================================================
     # DIMENSION
     # ========================================================
@@ -379,6 +384,7 @@ class AIAssistedChatService:
             contribution=contribution,
         )
 
+
     # ========================================================
     # GENERATE INTRODUCTION
     # ========================================================
@@ -391,50 +397,96 @@ class AIAssistedChatService:
             request: AIIntroductionRequest,
     ) -> AIIntroductionResponse:
 
+        # Validate conversation and user access first.
         context = self.build_introduction_context(
             conversation_id=conversation_id,
             user_id=user_id,
         )
 
+        # Prevent two generations for the same conversation
+        # from running at the same time.
+        lock_token = self.rate_limiter.acquire_generation_lock(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+
+        daily_slot_reserved = False
+
         try:
-            result = self.llm.generate_introduction(
-                context=context,
-                instruction=request.instruction,
-            )
-
-        except AIIntroductionGenerationError as exc:
-            self._record_failed_generation(
-                context=context,
+            # Short-term protection: maximum attempts per minute.
+            self.rate_limiter.check_minute_limit(
                 user_id=user_id,
-                error_code=exc.error_code,
             )
 
-            # The failed generation is observability data.
-            # It must survive the generation error.
-            self.session.commit()
+            # Reserve daily capacity BEFORE paying for an LLM call.
+            self.rate_limiter.reserve_daily_generation(
+                user_id=user_id,
+            )
+
+            daily_slot_reserved = True
+
+            try:
+                result = self.llm.generate_introduction(
+                    context=context,
+                    instruction=request.instruction,
+                )
+
+            except AIIntroductionGenerationError as exc:
+                # The user didn't receive a generation,
+                # so return their daily slot.
+                self.rate_limiter.release_daily_generation(
+                    user_id=user_id,
+                )
+
+                daily_slot_reserved = False
+
+                self._record_failed_generation(
+                    context=context,
+                    user_id=user_id,
+                    error_code=exc.error_code,
+                )
+
+                self.session.commit()
+
+                raise
+
+            # The LLM succeeded, so the daily slot stays consumed.
+            self.repository.create_generation(
+                user_id=user_id,
+                conversation_id=context.conversation_id,
+                match_id=context.match.match_id,
+                model=result.metadata.model,
+                prompt_version=result.metadata.prompt_version,
+                latency_ms=result.metadata.latency_ms,
+                input_tokens=result.metadata.input_tokens,
+                output_tokens=result.metadata.output_tokens,
+                generated_message=result.introduction.message,
+                success=True,
+            )
+
+            return AIIntroductionResponse(
+                suggestion=result.introduction.message,
+            )
+
+        except Exception:
+            # If something failed AFTER reserving a slot but BEFORE
+            # a successful LLM generation was completed, return it.
+            #
+            # LLM failures already release their slot above.
+            if daily_slot_reserved:
+                self.rate_limiter.release_daily_generation(
+                    user_id=user_id,
+                )
 
             raise
 
-        self.repository.create_generation(
-            user_id=user_id,
-            conversation_id=context.conversation_id,
-            match_id=context.match.match_id,
+        finally:
+            self.rate_limiter.release_generation_lock(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                lock_token=lock_token,
+            )
 
-            model=result.metadata.model,
-            prompt_version=result.metadata.prompt_version,
-
-            latency_ms=result.metadata.latency_ms,
-            input_tokens=result.metadata.input_tokens,
-            output_tokens=result.metadata.output_tokens,
-
-            generated_message=result.introduction.message,
-
-            success=True,
-        )
-
-        return AIIntroductionResponse(
-            suggestion=result.introduction.message,
-        )
 
     # ========================================================
     # FAILED GENERATION

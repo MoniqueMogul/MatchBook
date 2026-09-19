@@ -5,12 +5,15 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user_id
 from app.chat.ai_chat_assistant.llm import AIIntroductionGenerationError
+from app.chat.ai_chat_assistant.rate_limit import AIChatRateLimiter, AIChatTooManyRequestsError, AIChatDailyLimitError, \
+    AIChatGenerationInProgressError
 from app.chat.ai_chat_assistant.repository import AIChatContextNotFoundError
 from app.chat.ai_chat_assistant.schema import (
     AIIntroductionRequest,
     AIIntroductionResponse,
 )
 from app.chat.ai_chat_assistant.service import AIAssistedChatService
+from app.core.redis import redis_client
 from app.db.session import get_db
 
 
@@ -42,7 +45,8 @@ def generate_ai_suggestion(
     """
 
     service = AIAssistedChatService(
-        session
+        session=session,
+        rate_limiter=AIChatRateLimiter(redis_client),
     )
 
     try:
@@ -83,4 +87,33 @@ def generate_ai_suggestion(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to generate a suggestion right now.",
+        )
+
+    except AIChatGenerationInProgressError:
+        session.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An AI suggestion is already being generated.",
+        )
+
+
+    except AIChatTooManyRequestsError as exc:
+        session.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many AI generation requests. Please try again shortly.",
+            headers={
+                "Retry-After": str(exc.retry_after),
+            },
+        )
+
+
+    except AIChatDailyLimitError:
+        session.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily AI generation limit reached.",
         )
