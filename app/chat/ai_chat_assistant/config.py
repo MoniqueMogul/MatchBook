@@ -82,3 +82,15 @@ response schema.
 # ============================================================
 
 ACTIVE_INTRODUCTION_PROMPT = INTRODUCTION_V1
+
+
+
+# ============================================================
+# RATE LIMITS
+# ============================================================
+
+AI_CHAT_RATE_LIMIT_PER_MINUTE = 5
+AI_CHAT_DAILY_GENERATION_LIMIT = 100
+AI_CHAT_GENERATION_LOCK_SECONDS = 60
+AI_CHAT_MINUTE_WINDOW_SECONDS = 60
+AI_CHAT_DAILY_WINDOW_SECONDS = 86_400
