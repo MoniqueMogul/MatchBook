@@ -35,7 +35,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-app.add_middleware(RequestLogMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
