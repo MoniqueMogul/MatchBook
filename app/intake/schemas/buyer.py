@@ -18,6 +18,8 @@ _OPTIONAL_TEXT_FIELDS = (
 class BuyerProfileCreate(IntakeModel):
     """Data accepted when creating a buyer profile."""
 
+    about_me: str | None = None
+
     buyer_type: BuyerType
 
     current_industry: str | None = Field(
