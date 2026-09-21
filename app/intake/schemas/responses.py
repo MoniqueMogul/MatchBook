@@ -14,6 +14,7 @@ from app.intake.schemas.common import IntakeModel, TargetLocation
 
 class BuyerProfileRead(IntakeModel):
     id: UUID
+    about_me: str | None = None
     user_id: UUID
     buyer_type: BuyerType
 
