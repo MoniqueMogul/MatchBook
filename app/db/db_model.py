@@ -177,6 +177,11 @@ class BuyerProfile(Base):
         index=True,
     )
 
+    about_me: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
     buyer_type: Mapped[BuyerType] = mapped_column(
         String(40),
         nullable=False,
