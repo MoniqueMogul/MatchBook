@@ -83,6 +83,8 @@ class BuyerProfileCreate(IntakeModel):
 class BuyerProfileUpdate(IntakeModel):
     """Partial update for an existing buyer profile."""
 
+    about_me: str | None = None
+
     buyer_type: BuyerType | None = None
 
     current_industry: str | None = Field(
