@@ -10,7 +10,8 @@ from app.chat.repository import (
     ConversationNotFoundError,
     MessageNotFoundError,
 )
-from app.chat.schema import MessageCreate
+from app.chat.schema import MessageCreate, LatestMessageResponse, ConversationResponse, ConversationParticipantResponse, \
+    ConversationBusinessResponse
 from app.db.db_enum import EventType
 from app.db.db_model import (
     Business,
@@ -48,12 +49,65 @@ class ChatService:
         self.repository = ChatRepository(session)
 
     def list_conversations(
-        self,
-        user_id: UUID,
-    ) -> list[Conversation]:
-        return self.repository.list_user_conversations(
+            self,
+            user_id: UUID,
+    ) -> list[ConversationResponse]:
+
+        rows = self.repository.list_user_conversations(
             user_id=user_id,
         )
+
+        conversations: list[ConversationResponse] = []
+
+        for conversation, latest_message, unread_count in rows:
+            match = conversation.match
+            business = match.business
+
+            # The participant is always the OTHER person.
+            if match.buyer.user_id == user_id:
+                participant = business.seller.user
+            else:
+                participant = match.buyer.user
+
+            latest_message_response = None
+
+            if latest_message is not None:
+                latest_message_response = LatestMessageResponse(
+                    id=latest_message.id,
+                    sender_id=latest_message.sender_id,
+                    content=latest_message.content,
+                    created_at=latest_message.created_at,
+                )
+
+            conversations.append(
+                ConversationResponse(
+                    id=conversation.id,
+                    match_id=conversation.match_id,
+
+                    participant=ConversationParticipantResponse(
+                        user_id=participant.id,
+                        first_name=participant.first_name,
+                        last_name=participant.last_name,
+                    ),
+
+                    business=ConversationBusinessResponse(
+                        id=business.id,
+                        legal_name=business.legal_name,
+                        dba=business.dba,
+                        industry=business.industry,
+                        city=business.city,
+                        state=business.state,
+                    ),
+
+                    latest_message=latest_message_response,
+                    unread_count=unread_count,
+
+                    created_at=conversation.created_at,
+                    updated_at=conversation.updated_at,
+                )
+            )
+
+        return conversations
 
     def get_messages(
         self,
