@@ -7,9 +7,9 @@ from app.db.db_enum import (
     BuyerType,
     DealPreference,
     RealEstatePreference,
-    VerificationStatus, BusinessType,
+    VerificationStatus, BusinessModel, Industry, SubIndustry, BusinessType,
 )
-from app.intake.schemas.common import IntakeModel, TargetLocation
+from app.intake.schemas.common import IntakeModel, TargetLocation, TargetIndustryPreference
 
 
 class BuyerProfileRead(IntakeModel):
@@ -39,7 +39,13 @@ class BuyerPreferencesRead(IntakeModel):
     id: UUID
     buyer_id: UUID
 
-    target_industries: list[str] | None = None
+    target_industry_preferences: (
+        list[TargetIndustryPreference] | None
+    ) = None
+
+    target_business_models: list[BusinessModel] | None = None
+    target_business_types: list[BusinessType] | None = None
+
     target_locations: list[TargetLocation] | None = None
 
     maximum_purchase_price: Decimal | None = None
@@ -83,8 +89,11 @@ class BusinessRead(IntakeModel):
     legal_name: str | None = None
     dba: str | None = None
 
-    business_type: BusinessType
-    industry: str
+    # Business classification
+    industry: Industry | None = None
+    sub_industry: SubIndustry | None = None
+    business_model: BusinessModel | None = None
+    business_type: BusinessType | None = None
 
     city: str
     county: str | None = None
@@ -116,4 +125,7 @@ class BusinessRead(IntakeModel):
 
 class ReadinessResponse(IntakeModel):
     ready: bool
+    completion_percentage: int
+    completed_fields: int
+    total_required_fields: int
     missing_fields: tuple[str, ...]

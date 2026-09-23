@@ -3,8 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.db.db_enum import DealPreference
-from app.intake.schemas.common import TargetLocation
+from app.db.db_enum import (
+    DealPreference,
+    Industry,
+    SubIndustry,
+)
+from app.intake.schemas.common import TargetLocation, TargetIndustryPreference
 
 
 class MatchingModel(BaseModel):
@@ -38,12 +42,41 @@ class BuyerMatchInput(MatchingModel):
 
     buyer_id: UUID
 
+    # --------------------------------------------------------
     # Hard-filter dimensions
-    target_industries: list[str] | None = None
+    # --------------------------------------------------------
+
+    # Each industry contains the sub-industries the buyer
+    # is willing to acquire.
+    #
+    # Example:
+    # [
+    #     {
+    #         "industry": "automotive",
+    #         "sub_industries": [
+    #             "tire_shop",
+    #             "auto_repair_and_maintenance"
+    #         ]
+    #     },
+    #     {
+    #         "industry": "technology",
+    #         "sub_industries": [
+    #             "saas"
+    #         ]
+    #     }
+    # ]
+    target_industry_preferences: (
+        list[TargetIndustryPreference] | None
+    ) = None
+
     target_locations: list[TargetLocation] | None = None
+
     maximum_purchase_price: Decimal | None = None
 
+    # --------------------------------------------------------
     # FIT-scoring dimensions
+    # --------------------------------------------------------
+
     minimum_sde: Decimal | None = None
     preferred_sde: Decimal | None = None
 
@@ -77,14 +110,23 @@ class BusinessMatchInput(MatchingModel):
 
     business_id: UUID
 
+    # --------------------------------------------------------
     # Hard-filter dimensions
-    industry: str
+    # --------------------------------------------------------
+
+    industry: Industry
+    sub_industry: SubIndustry
+
     city: str
     county: str | None = None
     state: str
+
     asking_price: Decimal | None = None
 
+    # --------------------------------------------------------
     # FIT-scoring dimensions
+    # --------------------------------------------------------
+
     sde: Decimal | None = None
     arr: Decimal | None = None
 
@@ -152,4 +194,3 @@ class RankedMatch(MatchingModel):
 
     rank: int
     evaluation: MatchEvaluation
-

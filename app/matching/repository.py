@@ -1,6 +1,6 @@
 from decimal import Decimal
 from uuid import UUID
-from app.db.db_enum import MatchStatus
+from app.db.db_enum import MatchStatus, SubIndustry, Industry
 
 from sqlalchemy import and_, or_, select, exists
 from sqlalchemy.orm import Session, joinedload
@@ -137,7 +137,7 @@ class MatchingRepository:
         Hard filters:
             - active business
             - complete matching-required business data
-            - industry
+            - industry + sub-industry
             - state/city
             - maximum purchase price + tolerance
 
@@ -152,6 +152,8 @@ class MatchingRepository:
 
         statement = select(Business).where(
             Business.status == BusinessStatus.ACTIVE,
+            Business.industry.is_not(None),
+            Business.sub_industry.is_not(None),
             Business.asking_price.is_not(None),
             Business.sde.is_not(None),
             Business.arr.is_not(None),
@@ -163,14 +165,34 @@ class MatchingRepository:
         )
 
         # ----------------------------------------------------
-        # INDUSTRY
+        # INDUSTRY + SUB-INDUSTRY
         # ----------------------------------------------------
 
-        if preferences.target_industries:
-            statement = statement.where(
-                Business.industry.in_(
-                    preferences.target_industries
+        if preferences.target_industry_preferences:
+            classification_filters = []
+
+            for preference in preferences.target_industry_preferences:
+                industry = preference.get("industry")
+                sub_industries = preference.get("sub_industries")
+
+                if not industry or not sub_industries:
+                    continue
+
+                classification_filters.append(
+                    and_(
+                        Business.industry == industry,
+                        Business.sub_industry.in_(sub_industries),
+                    )
                 )
+
+            # If preferences exist but none are valid, return no
+            # candidates rather than accidentally removing the
+            # classification restriction.
+            if not classification_filters:
+                return []
+
+            statement = statement.where(
+                or_(*classification_filters)
             )
 
         # ----------------------------------------------------
@@ -187,6 +209,9 @@ class MatchingRepository:
             for location in preferences.target_locations:
                 state = location.get("state")
 
+                if not state:
+                    continue
+
                 conditions = [
                     Business.state == state
                 ]
@@ -201,6 +226,9 @@ class MatchingRepository:
                 location_filters.append(
                     and_(*conditions)
                 )
+
+            if not location_filters:
+                return []
 
             statement = statement.where(
                 or_(*location_filters)
@@ -262,8 +290,8 @@ class MatchingRepository:
         # ----------------------------------------------------
 
         statement = select(BuyerPreferences).where(
-            BuyerPreferences.target_industries.is_not(None),
-            BuyerPreferences.target_industries != [],
+            BuyerPreferences.target_industry_preferences.is_not(None),
+            BuyerPreferences.target_industry_preferences != [],
             BuyerPreferences.target_locations.is_not(None),
             BuyerPreferences.target_locations != [],
             BuyerPreferences.maximum_purchase_price.is_not(None),
@@ -297,12 +325,31 @@ class MatchingRepository:
         )
 
         # ----------------------------------------------------
-        # INDUSTRY
+        # INDUSTRY + SUB-INDUSTRY
         # ----------------------------------------------------
 
+        industry = (
+            business.industry.value
+            if isinstance(business.industry, Industry)
+            else business.industry
+        )
+
+        sub_industry = (
+            business.sub_industry.value
+            if isinstance(business.sub_industry, SubIndustry)
+            else business.sub_industry
+        )
+
         statement = statement.where(
-            BuyerPreferences.target_industries.contains(
-                [business.industry]
+            BuyerPreferences.target_industry_preferences.contains(
+                [
+                    {
+                        "industry": industry,
+                        "sub_industries": [
+                            sub_industry
+                        ],
+                    }
+                ]
             )
         )
 

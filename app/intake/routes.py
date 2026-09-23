@@ -14,6 +14,7 @@ from fastapi import (
 from app.auth.dependencies import (
     get_current_user_id,
 )
+from app.db.taxonomy import get_industry_options, get_business_model_options
 from app.intake.dependencies import (
     get_intake_repository,
 )
@@ -358,6 +359,9 @@ def get_buyer_readiness(
 
     return ReadinessResponse(
         ready=result.ready,
+        completion_percentage=result.completion_percentage,
+        completed_fields=result.completed_fields,
+        total_required_fields=result.total_required_fields,
         missing_fields=result.missing_fields,
     )
 
@@ -630,5 +634,18 @@ def get_business_readiness(
 
     return ReadinessResponse(
         ready=result.ready,
+        completion_percentage=result.completion_percentage,
+        completed_fields=result.completed_fields,
+        total_required_fields=result.total_required_fields,
         missing_fields=result.missing_fields,
     )
+
+
+@router.get("/industries")
+def get_industries():
+    return get_industry_options()
+
+
+@router.get("/business-models")
+def get_business_models():
+    return get_business_model_options()
