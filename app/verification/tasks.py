@@ -10,12 +10,13 @@ from app.core.celery_app import celery_app
 from app.db.db_enum import DocumentType, VerificationStatus
 from app.verification.config import VerificationSettings
 from app.verification.document_processing import (
+    assess_document_gate,
     decide_document_status,
     extract_pdf_text,
 )
 from app.verification.integrations.classifier import (
     DocumentClassifier,
-    OpenAIDocumentClassifier,
+    LocalDocumentTypeClassifier,
 )
 from app.verification.integrations.storage import (
     DocumentStorage,
@@ -41,7 +42,7 @@ def process_document(document_id: str) -> None:
             session=session,
             document_id=UUID(document_id),
             storage=R2DocumentStorage(settings),
-            classifier=OpenAIDocumentClassifier(settings),
+            classifier=LocalDocumentTypeClassifier(),
             confidence_threshold=settings.classification_confidence_threshold,
             max_document_bytes=settings.max_document_bytes,
             max_classifier_characters=settings.max_classifier_characters,
@@ -93,11 +94,24 @@ def run_document_processing(
 
         classification = classifier.classify(text[:max_classifier_characters])
         expected_type = DocumentType(_enum_value(document.document_type))
+        gate = assess_document_gate(
+            document_text=text,
+            expected_type=expected_type,
+            expected_business_names=(
+                repository.get_expected_business_names(document)
+            ),
+        )
         decision = decide_document_status(
             expected_type=expected_type,
             classification=classification,
             confidence_threshold=confidence_threshold,
         )
+        if (
+            decision.status == VerificationStatus.VERIFIED
+            and gate.review_reasons
+        ):
+            decision.status = VerificationStatus.REQUIRES_REVIEW
+            decision.reason_code = gate.review_reasons[0]
         verified_at = (
             datetime.now(timezone.utc)
             if decision.status == VerificationStatus.VERIFIED
@@ -106,7 +120,7 @@ def run_document_processing(
         repository.update_document_status(
             document,
             decision.status,
-            provider="openai",
+            provider="matchbook_local",
             verified_at=verified_at,
             metadata={
                 "expected_type": decision.expected_type.value,
@@ -114,7 +128,8 @@ def run_document_processing(
                 "confidence": decision.confidence,
                 "matches_expected": decision.matches_expected,
                 "reason_code": decision.reason_code,
-                "classifier_provider": "openai",
+                "classifier_provider": "local_rules_v1",
+                "gate_assessment": gate.model_dump(),
             },
         )
         if decision.status == VerificationStatus.VERIFIED:
@@ -159,7 +174,7 @@ def _failure_code(exc: Exception) -> str:
     name = type(exc).__name__.lower()
     if "extract" in name or "pdf" in name:
         return "text_extraction_failed"
-    if "provider" in name or "openai" in name:
+    if "provider" in name:
         return "provider_failed"
     return "processing_failed"
 

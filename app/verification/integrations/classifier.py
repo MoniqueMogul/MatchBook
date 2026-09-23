@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import json
+import re
 from typing import Protocol
 
-from pydantic import ValidationError
-
 from app.db.db_enum import DocumentType
-from app.verification.config import VerificationSettings
-from app.verification.exceptions import ProviderConfigurationError, ProviderError
 from app.verification.schemas import DetectedDocumentClassification
 
 
@@ -15,65 +11,84 @@ class DocumentClassifier(Protocol):
     def classify(self, document_text: str) -> DetectedDocumentClassification: ...
 
 
-class OpenAIDocumentClassifier:
-    """Classifies type only; application code owns the match decision."""
+class LocalDocumentTypeClassifier:
+    """Conservative local classifier that never exports document content."""
 
-    def __init__(self, settings: VerificationSettings) -> None:
-        self.settings = settings
+    _PRIMARY_MARKERS: dict[DocumentType, tuple[str, ...]] = {
+        DocumentType.BANK_STATEMENT: (
+            "bank statement",
+            "statement of account",
+        ),
+        DocumentType.TAX_RETURN: (
+            "tax return",
+            "form 1040",
+            "form 1065",
+            "form 1120",
+            "form 990",
+        ),
+        DocumentType.PROFIT_AND_LOSS: (
+            "profit and loss",
+            "income statement",
+            "statement of operations",
+        ),
+        DocumentType.BALANCE_SHEET: ("balance sheet",),
+        DocumentType.PROOF_OF_FUNDS: (
+            "proof of funds",
+            "verification of deposit",
+        ),
+        DocumentType.LOAN_APPROVAL: (
+            "loan approval",
+            "loan commitment letter",
+        ),
+        DocumentType.BUSINESS_LICENSE: (
+            "business license",
+            "business licence",
+        ),
+    }
 
     def classify(self, document_text: str) -> DetectedDocumentClassification:
-        if not self.settings.openai_api_key:
-            raise ProviderConfigurationError("OpenAI is not configured")
-        try:
-            from openai import OpenAI
+        normalized = _normalize_text(document_text)
+        matches = {
+            document_type
+            for document_type, markers in self._PRIMARY_MARKERS.items()
+            if any(marker in normalized for marker in markers)
+        }
 
-            client = OpenAI(api_key=self.settings.openai_api_key)
-            response = client.chat.completions.create(
-                model=self.settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Classify the supplied document. Return only its "
-                            "detected type and a confidence from 0 to 1."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": document_text,
-                    },
-                ],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "document_type_classification",
-                        "strict": True,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "detected_type": {
-                                    "type": "string",
-                                    "enum": [value.value for value in DocumentType],
-                                },
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 1,
-                                },
-                            },
-                            "required": ["detected_type", "confidence"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
+        if not matches:
+            matches.update(_secondary_matches(normalized))
+
+        if len(matches) != 1:
+            return DetectedDocumentClassification(
+                detected_type=DocumentType.OTHER,
+                confidence=0.0,
             )
-            content = response.choices[0].message.content
-            return DetectedDocumentClassification.model_validate(
-                json.loads(content or "")
-            )
-        except ProviderConfigurationError:
-            raise
-        except (json.JSONDecodeError, ValidationError, KeyError, IndexError) as exc:
-            raise ProviderError("Classifier returned invalid output") from exc
-        except Exception as exc:
-            raise ProviderError("Document classifier failed") from exc
+
+        return DetectedDocumentClassification(
+            detected_type=matches.pop(),
+            confidence=0.95,
+        )
+
+
+def _secondary_matches(normalized: str) -> set[DocumentType]:
+    matches: set[DocumentType] = set()
+    if all(
+        marker in normalized
+        for marker in ("account number", "statement period")
+    ):
+        matches.add(DocumentType.BANK_STATEMENT)
+    if all(
+        marker in normalized
+        for marker in ("assets", "liabilities", "equity")
+    ):
+        matches.add(DocumentType.BALANCE_SHEET)
+    if "pre approval" in normalized and "loan" in normalized:
+        matches.add(DocumentType.LOAN_APPROVAL)
+    return matches
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        re.sub(r"[^a-z0-9]+", " ", value.lower()),
+    ).strip()

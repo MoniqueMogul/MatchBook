@@ -8,7 +8,11 @@ from app.db.db_enum import DocumentType, VerificationStatus
 from app.verification.exceptions import DocumentExtractionError, ProviderError
 from app.verification.schemas import DetectedDocumentClassification
 from app.verification import tasks
-from app.verification.document_processing import extract_pdf_text
+from app.verification.document_processing import (
+    assess_document_gate,
+    extract_pdf_text,
+)
+from app.verification.integrations.classifier import LocalDocumentTypeClassifier
 from tests.verification.conftest import FakeSession, FakeStorage
 
 
@@ -16,6 +20,7 @@ class FakeRepository:
     def __init__(self, document):
         self.document = document
         self.transitions = []
+        self.business_names = None
 
     def get_document(self, document_id):
         return self.document
@@ -40,6 +45,9 @@ class FakeRepository:
 
     def create_verification_completed_event(self, document):
         self.completed_event_document = document
+
+    def get_expected_business_names(self, document):
+        return self.business_names
 
 
 class Classifier:
@@ -69,6 +77,44 @@ def test_pdf_parser_rejects_corrupt_pdf():
         extract_pdf_text(b"not a pdf")
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("BANK STATEMENT for account 123", DocumentType.BANK_STATEMENT),
+        ("Form 1120 U.S. Corporation Tax Return", DocumentType.TAX_RETURN),
+        ("Profit and Loss for 2025", DocumentType.PROFIT_AND_LOSS),
+        ("Balance Sheet as of December 2025", DocumentType.BALANCE_SHEET),
+        ("Official Proof of Funds Letter", DocumentType.PROOF_OF_FUNDS),
+        ("Loan Commitment Letter", DocumentType.LOAN_APPROVAL),
+        ("State Business License", DocumentType.BUSINESS_LICENSE),
+    ],
+)
+def test_local_classifier_recognizes_strong_type_markers(text, expected):
+    result = LocalDocumentTypeClassifier().classify(text)
+    assert result.detected_type == expected
+    assert result.confidence == 0.95
+
+
+def test_local_classifier_sends_ambiguous_content_to_review_path():
+    result = LocalDocumentTypeClassifier().classify(
+        "Profit and Loss attachment to Balance Sheet"
+    )
+    assert result.detected_type == DocumentType.OTHER
+    assert result.confidence == 0.0
+
+
+def test_gate_detects_business_identity_and_reporting_year():
+    assessment = assess_document_gate(
+        document_text="Acme, LLC Profit and Loss for year ended 2025",
+        expected_type=DocumentType.PROFIT_AND_LOSS,
+        expected_business_names=["ACME LLC"],
+    )
+    assert assessment.business_identity_match is True
+    assert assessment.reporting_period_identified is True
+    assert assessment.reporting_years == [2025]
+    assert assessment.review_reasons == []
+
+
 def run(monkeypatch, document, classifier, storage=None, extractor=None):
     session = FakeSession()
     repository = FakeRepository(document)
@@ -76,7 +122,9 @@ def run(monkeypatch, document, classifier, storage=None, extractor=None):
     monkeypatch.setattr(
         tasks,
         "extract_pdf_text",
-        extractor or (lambda _: "useful financial document text"),
+        extractor or (
+            lambda _: "useful financial document text for year ended 2025"
+        ),
     )
     result = tasks.run_document_processing(
         session=session,
@@ -100,7 +148,7 @@ def test_correct_document_type_becomes_verified(monkeypatch, document):
         VerificationStatus.VERIFIED,
     ]
     assert document.verified_at is not None
-    assert document.verification_provider == "openai"
+    assert document.verification_provider == "matchbook_local"
     assert document.document_metadata["matches_expected"] is True
     assert repository.completed_event_document is document
 
@@ -125,6 +173,46 @@ def test_low_confidence_requires_review(monkeypatch, document):
     )
     assert result == VerificationStatus.REQUIRES_REVIEW
     assert document.document_metadata["reason_code"] == "low_confidence"
+
+
+def test_missing_reporting_period_requires_review(monkeypatch, document):
+    result, _, _ = run(
+        monkeypatch,
+        document,
+        Classifier(DocumentType.PROFIT_AND_LOSS, 0.95),
+        extractor=lambda _: "Profit and Loss with no identifiable period",
+    )
+    assert result == VerificationStatus.REQUIRES_REVIEW
+    assert document.document_metadata["reason_code"] == (
+        "reporting_period_not_identified"
+    )
+
+
+def test_business_identity_mismatch_requires_review(monkeypatch, document):
+    document.buyer_financials_id = None
+    document.business_financials_id = document.id
+    session = FakeSession()
+    repository = FakeRepository(document)
+    repository.business_names = ["Expected Business LLC"]
+    monkeypatch.setattr(tasks, "VerificationRepository", lambda _: repository)
+    monkeypatch.setattr(
+        tasks,
+        "extract_pdf_text",
+        lambda _: "Other Company Profit and Loss for 2025",
+    )
+
+    result = tasks.run_document_processing(
+        session=session,
+        document_id=document.id,
+        storage=FakeStorage(),
+        classifier=Classifier(DocumentType.PROFIT_AND_LOSS, 0.95),
+        confidence_threshold=0.8,
+    )
+
+    assert result == VerificationStatus.REQUIRES_REVIEW
+    assert document.document_metadata["reason_code"] == (
+        "business_identity_not_confirmed"
+    )
 
 
 @pytest.mark.parametrize(

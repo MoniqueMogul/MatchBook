@@ -10,8 +10,6 @@ class VerificationSettings:
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
     r2_bucket_name: str = "matchbook-private"
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
     plaid_client_id: str = ""
     plaid_secret: str = ""
     plaid_environment: str = "sandbox"
@@ -32,8 +30,6 @@ class VerificationSettings:
             r2_access_key_id=os.getenv("R2_ACCESS_KEY_ID", ""),
             r2_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY", ""),
             r2_bucket_name=os.getenv("R2_BUCKET_NAME", "matchbook-private"),
-            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             plaid_client_id=os.getenv("PLAID_CLIENT_ID", ""),
             plaid_secret=os.getenv("PLAID_SECRET", ""),
             plaid_environment=os.getenv("PLAID_ENV", "sandbox"),

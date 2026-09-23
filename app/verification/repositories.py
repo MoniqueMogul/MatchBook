@@ -131,6 +131,23 @@ class VerificationRepository:
             select(Document).where(Document.id == document_id)
         )
 
+    def get_expected_business_names(self, document: Document) -> list[str] | None:
+        if document.business_financials_id is None:
+            return None
+        row = self.session.execute(
+            select(Business.legal_name, Business.dba)
+            .join(
+                BusinessFinancials,
+                BusinessFinancials.business_id == Business.id,
+            )
+            .where(
+                BusinessFinancials.id == document.business_financials_id
+            )
+        ).one_or_none()
+        if row is None:
+            raise ResourceNotFoundError("Document business not found")
+        return [name for name in row if name]
+
     def add_document(self, document: Document) -> Document:
         self.session.add(document)
         self.session.flush()

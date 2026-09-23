@@ -74,6 +74,14 @@ class DocumentDecision(BaseModel):
     reason_code: str
 
 
+class DocumentGateAssessment(BaseModel):
+    readable_text_extracted: bool
+    business_identity_match: bool | None
+    reporting_period_identified: bool | None
+    reporting_years: list[int] = Field(default_factory=list)
+    review_reasons: list[str] = Field(default_factory=list)
+
+
 class PlaidPublicTokenRequest(BaseModel):
     public_token: str = Field(min_length=1, max_length=2048)
 
