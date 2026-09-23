@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import select, or_, func
+from sqlalchemy.orm import Session, joinedload, selectinload, aliased
 
 from app.db.db_model import (
     Business,
@@ -25,6 +26,33 @@ class ConversationNotFoundError(ChatRepositoryError):
 
 class MessageNotFoundError(ChatRepositoryError):
     """Raised when a message does not exist."""
+
+
+
+@dataclass(frozen=True)
+class ConversationListItem:
+    id: UUID
+    match_id: UUID
+
+    participant_user_id: UUID
+    participant_first_name: str
+    participant_last_name: str
+
+    business_id: UUID
+    business_name: str
+    business_industry: str
+
+    latest_message_id: UUID | None
+    latest_message_sender_id: UUID | None
+    latest_message_content: str | None
+    latest_message_created_at: datetime | None
+
+    unread_count: int
+
+    category: str
+
+    created_at: datetime
+    updated_at: datetime
 
 
 class ChatRepository:
@@ -157,38 +185,68 @@ class ChatRepository:
 
         return message
 
-
     def list_user_conversations(
-        self,
-        user_id: UUID,
-    ) -> list[Conversation]:
-        statement = (
-            select(Conversation)
-            .join(
-                Match,
-                Conversation.match_id == Match.id,
-            )
-            .join(
-                BuyerProfile,
-                Match.buyer_id == BuyerProfile.id,
-            )
-            .join(
-                Business,
-                Match.business_id == Business.id,
-            )
-            .join(
-                SellerProfile,
-                Business.seller_id == SellerProfile.id,
-            )
+            self,
+            user_id: UUID,
+    ):
+        LatestMessage = aliased(Message)
+
+        latest_message_id = (
+            select(Message.id)
             .where(
-                (BuyerProfile.user_id == user_id)
-                | (SellerProfile.user_id == user_id)
+                Message.conversation_id == Conversation.id
             )
             .order_by(
-                Conversation.updated_at.desc()
+                Message.created_at.desc(),
+                Message.id.desc(),
             )
+            .limit(1)
+            .correlate(Conversation)
+            .scalar_subquery()
         )
 
-        return list(
-            self.session.scalars(statement).all()
+        unread_count = (
+            select(func.count(Message.id))
+            .where(
+                Message.conversation_id == Conversation.id,
+                Message.sender_id != user_id,
+                Message.read_at.is_(None),
+            )
+            .correlate(Conversation)
+            .scalar_subquery()
         )
+
+        stmt = (
+            select(
+                Conversation,
+                LatestMessage,
+                unread_count.label("unread_count"),
+            )
+            .join(Conversation.match)
+            .join(Match.buyer)
+            .join(Match.business)
+            .join(Business.seller)
+            .outerjoin(
+                LatestMessage,
+                LatestMessage.id == latest_message_id,
+            )
+            .where(
+                or_(
+                    BuyerProfile.user_id == user_id,
+                    SellerProfile.user_id == user_id,
+                )
+            )
+            .options(
+                joinedload(Conversation.match)
+                .joinedload(Match.buyer)
+                .joinedload(BuyerProfile.user),
+
+                joinedload(Conversation.match)
+                .joinedload(Match.business)
+                .joinedload(Business.seller)
+                .joinedload(SellerProfile.user),
+            )
+            .order_by(Conversation.updated_at.desc())
+        )
+
+        return self.session.execute(stmt).all()

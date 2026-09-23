@@ -34,7 +34,7 @@ from app.db.db_enum import (
     NotificationType,
     EventType,
     DeclarationStatus,
-    OutboxStatus, EventConsumer, BusinessType
+    OutboxStatus, EventConsumer, BusinessType, SubIndustry, Industry, BusinessModel
 )
 
 
@@ -315,13 +315,52 @@ class BuyerPreferences(Base):
     )
 
     # --------------------------------------------------------
-    # Industry / Geography
+    # Industry Preferences
     # --------------------------------------------------------
 
-    target_industries: Mapped[list | None] = mapped_column(
+    # Industries and their selected sub-industries.
+    #
+    # Example:
+    # [
+    #     {
+    #         "industry": "automotive",
+    #         "sub_industries": [
+    #             "auto_repair_and_maintenance",
+    #             "car_wash_and_detailing"
+    #         ]
+    #     },
+    #     {
+    #         "industry": "technology",
+    #         "sub_industries": [
+    #             "saas",
+    #             "managed_it_services"
+    #         ]
+    #     }
+    # ]
+    target_industry_preferences: Mapped[list[dict] | None] = mapped_column(
         JSONB,
         nullable=True,
     )
+
+    # Business models the buyer prefers.
+    # Example:
+    # ["recurring_service", "contract_based"]
+    target_business_models: Mapped[list[str] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    # Legal business structures the buyer is willing to acquire.
+    # Example:
+    # ["llc", "s_corporation", "c_corporation"]
+    target_business_types: Mapped[list[str] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    # --------------------------------------------------------
+    # Geography
+    # --------------------------------------------------------
 
     target_locations: Mapped[list | None] = mapped_column(
         JSONB,
@@ -450,9 +489,21 @@ class BuyerPreferences(Base):
     __table_args__ = (
 
         Index(
-        "ix_buyer_preferences_target_industries_gin",
-        "target_industries",
-        postgresql_using="gin",
+            "ix_buyer_preferences_target_industry_preferences_gin",
+            "target_industry_preferences",
+            postgresql_using="gin",
+        ),
+
+        Index(
+            "ix_buyer_preferences_target_business_models_gin",
+            "target_business_models",
+            postgresql_using="gin",
+        ),
+
+        Index(
+            "ix_buyer_preferences_target_business_types_gin",
+            "target_business_types",
+            postgresql_using="gin",
         ),
 
         Index(
@@ -786,7 +837,7 @@ class Business(Base):
     )
 
     # --------------------------------------------------------
-    # Identity
+    # Identity / Classification
     # --------------------------------------------------------
 
     legal_name: Mapped[str | None] = mapped_column(
@@ -799,17 +850,30 @@ class Business(Base):
         nullable=True,
     )
 
+    # Legal structure of the business.
+    # Example: LLC, S corporation, partnership.
     business_type: Mapped[BusinessType] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    # What does the business do?
+    industry: Mapped[Industry] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    # What specifically does the business do?
+    sub_industry: Mapped[SubIndustry] = mapped_column(
         String(150),
         nullable=False,
     )
 
-    industry: Mapped[str] = mapped_column(
-        String(150),
+    # How does the business make money?
+    business_model: Mapped[BusinessModel] = mapped_column(
+        String(100),
         nullable=False,
-        index=True,
     )
-
     # --------------------------------------------------------
     # Geography
     # --------------------------------------------------------
@@ -1028,9 +1092,10 @@ class Business(Base):
         ),
 
         Index(
-            "ix_business_matching_industry",
+            "ix_business_matching_classification",
             "status",
             "industry",
+            "sub_industry",
         ),
 
         Index(

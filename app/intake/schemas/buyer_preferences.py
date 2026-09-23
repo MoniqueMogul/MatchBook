@@ -8,12 +8,12 @@ from pydantic import (
 
 from app.db.db_enum import (
     DealPreference,
-    RealEstatePreference,
+    RealEstatePreference, BusinessType,BusinessModel,
 )
 
 from app.intake.schemas.common import (
     IntakeModel,
-    TargetLocation,
+    TargetLocation, TargetIndustryPreference,
 )
 
 
@@ -27,7 +27,11 @@ class BuyerPreferencesUpsert(IntakeModel):
     Matching readiness is checked separately.
     """
 
-    target_industries: list[str] | None = None
+    target_industry_preferences: list[TargetIndustryPreference] | None = None
+
+    target_business_models: list[BusinessModel] | None = None
+
+    target_business_types: BusinessType | None = None
 
     target_locations: list[TargetLocation] | None = None
 
@@ -93,32 +97,6 @@ class BuyerPreferencesUpsert(IntakeModel):
         max_length=100,
     )
 
-    @field_validator("target_industries")
-    @classmethod
-    def clean_target_industries(
-        cls,
-        industries: list[str] | None,
-    ) -> list[str] | None:
-
-        if industries is None:
-            return None
-
-        cleaned: list[str] = []
-        seen: set[str] = set()
-
-        for raw in industries:
-            industry = raw.strip()
-
-            if not industry:
-                continue
-
-            key = industry.casefold()
-
-            if key not in seen:
-                cleaned.append(industry)
-                seen.add(key)
-
-        return cleaned or None
 
     @field_validator("preferred_acquisition_timeline")
     @classmethod

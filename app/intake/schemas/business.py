@@ -1,11 +1,19 @@
 from decimal import Decimal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from app.db.db_enum import DealPreference, BusinessType
+from app.db.db_enum import (
+    BusinessModel,
+    BusinessType,
+    DealPreference,
+    Industry,
+    SubIndustry,
+)
+from app.db.industry_mapping import INDUSTRY_SUB_INDUSTRIES
 from app.intake.schemas.common import IntakeModel
 
 
+# Only actual free-text fields belong here.
 _OPTIONAL_TEXT_FIELDS = (
     "legal_name",
     "dba",
@@ -16,8 +24,6 @@ _OPTIONAL_TEXT_FIELDS = (
 
 
 _REQUIRED_TEXT_FIELDS = (
-    "business_type",
-    "industry",
     "city",
     "state",
 )
@@ -36,12 +42,13 @@ class BusinessCreate(IntakeModel):
         max_length=255,
     )
 
+    # Legal structure: LLC, corporation, partnership, etc.
     business_type: BusinessType
 
-    industry: str = Field(
-        min_length=1,
-        max_length=150,
-    )
+    # Business classification
+    industry: Industry
+    sub_industry: SubIndustry
+    business_model: BusinessModel
 
     city: str = Field(
         min_length=1,
@@ -155,6 +162,27 @@ class BusinessCreate(IntakeModel):
 
         return value
 
+    @model_validator(mode="after")
+    def validate_industry_classification(self):
+        allowed_sub_industries = INDUSTRY_SUB_INDUSTRIES.get(
+            self.industry
+        )
+
+        if allowed_sub_industries is None:
+            raise ValueError(
+                f"No sub-industry configuration exists for "
+                f"industry '{self.industry.value}'."
+            )
+
+        if self.sub_industry not in allowed_sub_industries:
+            raise ValueError(
+                f"Sub-industry '{self.sub_industry.value}' "
+                f"is not valid for industry "
+                f"'{self.industry.value}'."
+            )
+
+        return self
+
 
 class BusinessUpdate(IntakeModel):
     """Partial update for an existing business."""
@@ -169,13 +197,11 @@ class BusinessUpdate(IntakeModel):
         max_length=255,
     )
 
-    business_type: BusinessType | None
+    business_type: BusinessType | None = None
 
-    industry: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=150,
-    )
+    industry: Industry | None = None
+    sub_industry: SubIndustry | None = None
+    business_model: BusinessModel | None = None
 
     city: str | None = Field(
         default=None,
