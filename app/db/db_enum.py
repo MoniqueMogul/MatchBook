@@ -12,6 +12,11 @@ class VerificationStatus(str, Enum):
     PENDING = "pending"
     VERIFIED = "verified"
     REJECTED = "rejected"
+    UPLOADING = "uploading"
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    REQUIRES_REVIEW = "requires_review"
+    FAILED = "failed"
 
 
 class BuyerType(str, Enum):

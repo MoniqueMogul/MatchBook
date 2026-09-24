@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.notification.tasks",
         "app.chat.tasks",
         "app.matching.tasks",
+        "app.verification.tasks",
     ],
 )
 
@@ -67,6 +68,7 @@ celery_app.conf.update(
         Queue("notifications"),
         Queue("chat"),
         Queue("matching"),
+        Queue("verification"),
     ),
 
     # Task → queue routing
@@ -88,6 +90,9 @@ celery_app.conf.update(
         },
         "app.matching.tasks.process_matching_event_task": {
             "queue": "matching",
+        },
+        "app.verification.tasks.process_document": {
+            "queue": "verification",
         },
     },
 )

@@ -19,6 +19,8 @@ from app.notification.routes import (
     router as notification_router,
 )
 
+from app.verification.routes import router as verification_router
+
 from app.core.observability import (
     RequestLogMiddleware,
     configure_logging,
@@ -113,4 +115,7 @@ app.include_router(
 )
 app.include_router(
     chat_router,
+)
+app.include_router(
+    verification_router,
 )
