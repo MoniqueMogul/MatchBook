@@ -116,6 +116,19 @@ class VerificationStatusResponse(BaseModel):
     provider: str | None = None
 
 
+class NDAIneligibilityReason(str, Enum):
+    BUYER_KYC = "buyer_kyc"
+    BUYER_FINANCIAL_VERIFICATION = "buyer_financial_verification"
+    SELLER_KYC = "seller_kyc"
+    BUSINESS_KYB = "business_kyb"
+    BUSINESS_FINANCIAL_VERIFICATION = "business_financial_verification"
+
+
+class NDAEligibilityResult(BaseModel):
+    eligible: bool
+    missing: list[NDAIneligibilityReason] = Field(default_factory=list)
+
+
 class DiditResult(BaseModel):
     session_id: str
     workflow: IdentityWorkflow

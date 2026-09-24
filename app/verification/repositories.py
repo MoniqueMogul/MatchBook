@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.db_enum import EventType, VerificationStatus
 from app.db.db_model import (
@@ -15,6 +15,7 @@ from app.db.db_model import (
     BuyerProfile,
     Declaration,
     Document,
+    Match,
     SellerProfile,
     User,
 )
@@ -28,6 +29,27 @@ class VerificationRepository:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def require_match_verification_context(self, match_id: UUID) -> Match:
+        """Load every authoritative record used by the NDA eligibility gate."""
+        statement = (
+            select(Match)
+            .options(
+                joinedload(Match.buyer).joinedload(BuyerProfile.user),
+                joinedload(Match.buyer).joinedload(BuyerProfile.financials),
+                joinedload(Match.business)
+                .joinedload(Business.seller)
+                .joinedload(SellerProfile.user),
+                joinedload(Match.business)
+                .joinedload(Business.financials)
+                .joinedload(BusinessFinancials.documents),
+            )
+            .where(Match.id == match_id)
+        )
+        match = self.session.execute(statement).unique().scalar_one_or_none()
+        if match is None:
+            raise ResourceNotFoundError("Match not found")
+        return match
 
     def require_owned_buyer_financials(
         self,

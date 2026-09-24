@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.verification.schemas import NDAIneligibilityReason
+
+
 class VerificationError(Exception):
     """Base class for expected verification failures."""
 
@@ -20,3 +28,11 @@ class ProviderError(VerificationError):
 
 class DocumentExtractionError(VerificationError):
     """Document text could not be extracted safely."""
+
+
+class NDAEligibilityError(VerificationError):
+    """A match cannot proceed to NDA because verification is incomplete."""
+
+    def __init__(self, missing: list[NDAIneligibilityReason]) -> None:
+        self.missing = list(missing)
+        super().__init__("Match is not eligible for NDA")
