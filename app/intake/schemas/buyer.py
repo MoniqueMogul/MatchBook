@@ -3,7 +3,6 @@ from pydantic import Field, field_validator
 from app.db.db_enum import BuyerType
 from app.intake.schemas.common import IntakeModel
 
-
 _OPTIONAL_TEXT_FIELDS = (
     "current_industry",
     "current_position",
@@ -20,7 +19,7 @@ class BuyerProfileCreate(IntakeModel):
 
     about_me: str | None = None
 
-    buyer_type: BuyerType
+    buyer_type: BuyerType | None = None
 
     current_industry: str | None = Field(
         default=None,
@@ -68,10 +67,9 @@ class BuyerProfileCreate(IntakeModel):
     @field_validator(*_OPTIONAL_TEXT_FIELDS)
     @classmethod
     def blank_string_becomes_none(
-        cls,
-        value: str | None,
+            cls,
+            value: str | None,
     ) -> str | None:
-
         if value is None:
             return None
 
@@ -133,10 +131,9 @@ class BuyerProfileUpdate(IntakeModel):
     @field_validator(*_OPTIONAL_TEXT_FIELDS)
     @classmethod
     def blank_string_becomes_none(
-        cls,
-        value: str | None,
+            cls,
+            value: str | None,
     ) -> str | None:
-
         if value is None:
             return None
 
