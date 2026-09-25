@@ -62,22 +62,26 @@ async def signwell_webhook(
             detail="Invalid webhook payload.",
         )
 
-    # --------------------------------------------------------
-    # Provider
-    # --------------------------------------------------------
 
-    provider = build_signature_provider()
 
     # --------------------------------------------------------
     # Parse + verify provider event
     # --------------------------------------------------------
 
     try:
+        provider = build_signature_provider()
+
         events = await provider.parse_webhook(
             payload=payload,
             headers=dict(request.headers),
             raw_body=raw_body,
         )
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Electronic signature service is not configured.",
+        ) from exc
 
     except SignatureWebhookVerificationError as exc:
         raise HTTPException(

@@ -15,11 +15,12 @@ class SignatureProvider(ABC):
 
     @abstractmethod
     async def create_document(
-        self,
-        *,
-        signers: list[Signer],
-        template_version: str,
-        fields: dict[str, str],
+            self,
+            *,
+            signers: list[Signer],
+            template_version: str,
+            reference_id: str,
+            fields: dict[str, str],
     ) -> SigningDocument:
         """
         Create a signature document using the provider.

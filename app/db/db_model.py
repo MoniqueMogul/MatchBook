@@ -184,7 +184,7 @@ class BuyerProfile(Base):
 
     buyer_type: Mapped[BuyerType | None] = mapped_column(
         String(40),
-        nullable=False,
+        nullable=True,
     )
 
     current_industry: Mapped[str | None] = mapped_column(
@@ -1810,6 +1810,15 @@ class NDA(Base):
         nullable=False,
         index=True,
     )
+
+    signing_initialization_started_at: Mapped[
+        datetime | None
+        ] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
 
     version: Mapped[str] = mapped_column(
         String(50),

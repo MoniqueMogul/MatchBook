@@ -97,7 +97,8 @@ class NDAStatus(str, Enum):
     BUYER_SIGNED = "buyer_signed"
     SELLER_SIGNED = "seller_signed"
     COMPLETED = "completed"
-
+    DECLINED = "declined"
+    EXPIRED = "expired"
 
 class NDASigningInitializationStatus(str, Enum):
     NOT_STARTED = "not_started"

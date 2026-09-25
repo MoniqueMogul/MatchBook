@@ -39,7 +39,6 @@ class VerificationCompletedPayload(BaseModel):
 
 
 class NdaCompletedPayload(BaseModel):
-    user_id: UUID
     nda_id: UUID
     match_id: UUID
 
