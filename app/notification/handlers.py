@@ -158,10 +158,11 @@ def _handle_nda_completed(
         related_entity_id=payload.nda_id,
     )
 
-    repository.create_notification(
-        user_id=payload.user_id,
-        data=data,
-    )
+    for user_id in dict.fromkeys(payload.user_ids):
+        repository.create_notification(
+            user_id=user_id,
+            data=data,
+        )
 
 
 def _handle_document_uploaded(

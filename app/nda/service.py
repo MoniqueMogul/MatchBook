@@ -245,6 +245,12 @@ class NDAService:
             entity_id=nda.id,
             idempotency_key=idempotency_key,
             payload={
+                "user_ids": [
+                    str(nda.match.buyer.user_id),
+                    str(
+                        nda.match.business.seller.user_id
+                    ),
+                ],
                 "nda_id": str(nda.id),
                 "match_id": str(nda.match_id),
             },
