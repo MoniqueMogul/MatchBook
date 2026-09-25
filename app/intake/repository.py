@@ -10,7 +10,7 @@ from app.db.db_model import (
     BuyerProfile,
     OutboxEvent,
     SellerProfile,
-    User,
+    User, BuyerFinancials,
 )
 from app.db.db_enum import EventType
 from app.events.payload_schema import (
@@ -30,6 +30,7 @@ from app.intake.schemas.buyer import (
 from app.intake.schemas.buyer_preferences import (
     BuyerPreferencesUpsert,
 )
+from app.intake.schemas.responses import BuyerFinancialVerificationStatusRead
 from app.intake.schemas.seller import SellerProfileCreate
 
 

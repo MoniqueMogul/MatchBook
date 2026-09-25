@@ -16,7 +16,7 @@ class BuyerProfileRead(IntakeModel):
     id: UUID
     about_me: str | None = None
     user_id: UUID
-    buyer_type: BuyerType
+    buyer_type: BuyerType | None = None
 
     current_industry: str | None = None
     current_position: str | None = None
@@ -75,8 +75,6 @@ class BuyerPreferencesRead(IntakeModel):
 class SellerProfileRead(IntakeModel):
     id: UUID
     user_id: UUID
-
-    verification_status: VerificationStatus
 
     created_at: datetime
     updated_at: datetime

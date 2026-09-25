@@ -182,7 +182,7 @@ class BuyerProfile(Base):
         nullable=True,
     )
 
-    buyer_type: Mapped[BuyerType] = mapped_column(
+    buyer_type: Mapped[BuyerType | None] = mapped_column(
         String(40),
         nullable=False,
     )
@@ -230,13 +230,6 @@ class BuyerProfile(Base):
     zip_code: Mapped[str | None] = mapped_column(
         String(20),
         nullable=True,
-    )
-
-    verification_status: Mapped[VerificationStatus] = mapped_column(
-        String(30),
-        default=VerificationStatus.UNVERIFIED,
-        nullable=False,
-        index=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -764,12 +757,6 @@ class SellerProfile(Base):
         index=True,
     )
 
-    verification_status: Mapped[VerificationStatus] = mapped_column(
-        String(30),
-        default=VerificationStatus.UNVERIFIED,
-        nullable=False,
-        index=True,
-    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -1818,6 +1805,28 @@ class NDA(Base):
     version: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
+    )
+
+    # --------------------------------------------------------
+    # Electronic signature provider
+    # --------------------------------------------------------
+
+    signature_provider: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    provider_document_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    provider_template_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
     )
 
     buyer_signed_at: Mapped[datetime | None] = mapped_column(
