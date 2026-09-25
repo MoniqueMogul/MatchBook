@@ -26,15 +26,15 @@ class NDACreate(NDABase):
     version: str
 
 
-class NDASignRequest(NDABase):
+class NDASigningSessionResponse(NDABase):
     """
-    The authenticated user is the signer.
+    Signing session returned to the frontend.
 
-    We intentionally do not accept signer_user_id or signer_role
-    from the frontend.
+    The frontend opens signing_url in the embedded
+    signature-provider UI.
     """
 
-    pass
+    signing_url: str
 
 
 class NDAResponse(NDABase):

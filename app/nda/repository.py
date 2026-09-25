@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.db.db_enum import NDASigningInitializationStatus
 from app.db.db_model import (
     NDA,
     Match,
@@ -52,29 +53,28 @@ class NDARepository:
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_by_provider_document_id(
-        self,
-        *,
-        provider_document_id: str,
-        for_update: bool = False,
+            self,
+            *,
+            signature_provider: str,
+            provider_document_id: str,
+            for_update: bool = False,
     ) -> NDA | None:
-        """
-        Find the Matchbook NDA associated with an external
-        signature-provider document.
-
-        This is primarily used when processing provider webhooks.
-        """
 
         stmt = (
             select(NDA)
             .where(
-                NDA.provider_document_id == provider_document_id
+                NDA.signature_provider == signature_provider,
+                NDA.provider_document_id == provider_document_id,
             )
         )
 
         if for_update:
             stmt = stmt.with_for_update()
 
-        return self.db.execute(stmt).scalar_one_or_none()
+        return (
+            self.db.execute(stmt)
+            .scalar_one_or_none()
+        )
 
     def get_with_match(
         self,
@@ -100,17 +100,11 @@ class NDARepository:
         )
 
     def get_for_signing(
-        self,
-        *,
-        nda_id: UUID,
+            self,
+            *,
+            nda_id: UUID,
+            for_update: bool = False,
     ) -> NDA | None:
-        """
-        Load the NDA, buyer, seller, business and users required
-        for signing.
-
-        The NDA row is locked so two concurrent signing operations
-        cannot modify its state at the same time.
-        """
 
         stmt = (
             select(NDA)
@@ -125,8 +119,10 @@ class NDARepository:
                 .joinedload(Business.seller)
                 .joinedload(SellerProfile.user),
             )
-            .with_for_update()
         )
+
+        if for_update:
+            stmt = stmt.with_for_update()
 
         return (
             self.db.execute(stmt)
@@ -154,22 +150,84 @@ class NDARepository:
         return nda
 
     def attach_signature_provider(
-        self,
-        *,
-        nda: NDA,
-        signature_provider: str,
-        provider_document_id: str,
-        provider_template_id: str | None,
+            self,
+            *,
+            nda: NDA,
+            signature_provider: str,
+            provider_document_id: str,
+            provider_template_id: str | None,
     ) -> NDA:
-        """
-        Associate an existing Matchbook NDA with the document
-        created by the configured electronic-signature provider.
-        """
 
         nda.signature_provider = signature_provider
         nda.provider_document_id = provider_document_id
         nda.provider_template_id = provider_template_id
 
+        nda.signing_initialization_status = (
+            NDASigningInitializationStatus.READY
+        )
+
         self.db.flush()
 
         return nda
+
+    def claim_signing_initialization(
+            self,
+            *,
+            nda_id: UUID,
+    ) -> bool:
+        """
+        Atomically claim responsibility for creating the external
+        signature document.
+
+        Returns True only for the request that successfully
+        claimed initialization.
+        """
+
+        nda = self.get_by_id(
+            nda_id,
+            for_update=True,
+        )
+
+        if nda is None:
+            return False
+
+        if nda.provider_document_id is not None:
+            return False
+
+        if (
+                nda.signing_initialization_status
+                == NDASigningInitializationStatus.INITIALIZING
+        ):
+            return False
+
+        nda.signing_initialization_status = (
+            NDASigningInitializationStatus.INITIALIZING
+        )
+
+        self.db.flush()
+
+        return True
+
+
+    def mark_signing_initialization_failed(
+            self,
+            *,
+            nda_id: UUID,
+    ) -> None:
+
+        nda = self.get_by_id(
+            nda_id,
+            for_update=True,
+        )
+
+        if nda is None:
+            return
+
+        if nda.provider_document_id is not None:
+            return
+
+        nda.signing_initialization_status = (
+            NDASigningInitializationStatus.FAILED
+        )
+
+        self.db.flush()

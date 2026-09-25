@@ -19,6 +19,12 @@ from app.notification.routes import (
     router as notification_router,
 )
 
+from app.nda.route import router as nda_router
+
+from app.nda.webhook_route import (
+    router as nda_webhook_router,
+)
+
 from app.verification.routes import router as verification_router
 
 from app.core.observability import (
@@ -118,4 +124,11 @@ app.include_router(
 )
 app.include_router(
     verification_router,
+)
+
+app.include_router(
+    nda_router,
+)
+app.include_router(
+    nda_webhook_router
 )

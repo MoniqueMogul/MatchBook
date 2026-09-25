@@ -14,15 +14,16 @@ from app.nda.repository import NDARepository
 from app.nda.signing.base import SignatureProvider
 from app.nda.signing.enums import (
     SignerRole,
-    SigningEventType,
+    SigningEventType, SignatureProviderType,
 )
+from app.nda.signing.exceptions import SignatureProviderError, SignatureProviderRequestError
 from app.nda.signing.schemas import (
     Signer,
     SigningEvent,
     SigningSession,
 )
 
-from app.verification.verification_service import VerificationService
+from app.verification.services.nda_eligibility import NDAEligibilityService
 
 
 # ============================================================
@@ -48,6 +49,13 @@ class NDAAlreadySignedError(NDAServiceError):
 class NDAAlreadyCompletedError(NDAServiceError):
     pass
 
+class NDASigningInitializationInProgressError(NDAServiceError):
+    pass
+
+
+class NDASigningInitializationError(NDAServiceError):
+    pass
+
 
 # ============================================================
 # SERVICE
@@ -62,7 +70,7 @@ class NDAService:
             signature_provider: SignatureProvider,
             repository: NDARepository | None = None,
             outbox_repository: OutboxRepository | None = None,
-            verification_service: VerificationService | None = None,
+            verification_service: NDAEligibilityService | None = None,
     ) -> None:
 
         self.db = db
@@ -79,7 +87,7 @@ class NDAService:
 
         self.verification_service = (
                 verification_service
-                or VerificationService(db)
+                or NDAEligibilityService(db)
         )
 
         self.signature_provider = signature_provider
@@ -91,96 +99,56 @@ class NDAService:
     async def create_signing_session(
             self,
             *,
-            nda_id: UUID,
-            current_user_id: UUID,
+            provider_document_id: str,
+            signer: Signer,
     ) -> SigningSession:
 
-        nda = self.repository.get_for_signing(
-            nda_id=nda_id,
+        data = await self._get_document_data(
+            provider_document_id=provider_document_id,
         )
 
-        if nda is None:
-            raise NDANotFoundError(
-                f"NDA {nda_id} was not found."
+        expected_recipient_id = (
+            self._recipient_id_for_role(
+                signer.role
             )
-
-        signer_role = self._get_signer_role(
-            nda=nda,
-            current_user_id=current_user_id,
         )
 
-        self.verification_service.require_nda_eligibility(
-            match_id=nda.match_id,
-        )
+        for recipient in data.get("recipients", []):
 
-        if nda.status == NDAStatus.COMPLETED:
-            raise NDAAlreadyCompletedError(
-                "This NDA has already been completed."
-            )
+            if str(recipient.get("id")) != expected_recipient_id:
+                continue
 
-        if (
-                signer_role == SignerRole.BUYER
-                and nda.buyer_signed_at is not None
-        ):
-            raise NDAAlreadySignedError(
-                "Buyer has already signed this NDA."
-            )
+            recipient_email = (
+                    recipient.get("email") or ""
+            ).strip().lower()
 
-        if (
-                signer_role == SignerRole.SELLER
-                and nda.seller_signed_at is not None
-        ):
-            raise NDAAlreadySignedError(
-                "Seller has already signed this NDA."
-            )
+            signer_email = signer.email.strip().lower()
 
-        # ---------------------------------------------
-        # Create provider document when first needed
-        # ---------------------------------------------
-
-        if nda.provider_document_id is None:
-            buyer = self._build_signer(
-                nda=nda,
-                role=SignerRole.BUYER,
-            )
-
-            seller = self._build_signer(
-                nda=nda,
-                role=SignerRole.SELLER,
-            )
-
-            document = (
-                await self.signature_provider.create_document(
-                    signers=[
-                        buyer,
-                        seller,
-                    ],
-                    template_version=nda.version,
-                    fields=self._build_document_fields(
-                        nda=nda,
-                    ),
+            if recipient_email != signer_email:
+                raise SignatureProviderRequestError(
+                    "SignWell recipient identity does not "
+                    "match the authenticated signer."
                 )
+
+            signing_url = recipient.get(
+                "embedded_signing_url"
             )
 
-            self.repository.attach_signature_provider(
-                nda=nda,
-                signature_provider=document.provider.value,
-                provider_document_id=document.provider_document_id,
-                provider_template_id=document.provider_template_id,
+            if not signing_url:
+                raise SignatureProviderRequestError(
+                    "SignWell did not return an "
+                    "embedded signing URL."
+                )
+
+            return SigningSession(
+                provider=SignatureProviderType.SIGNWELL,
+                provider_document_id=provider_document_id,
+                signing_url=signing_url,
             )
 
-            self.db.commit()
-
-        signer = self._build_signer(
-            nda=nda,
-            role=signer_role,
-        )
-
-        return (
-            await self.signature_provider.create_signing_session(
-                provider_document_id=nda.provider_document_id,
-                signer=signer,
-            )
+        raise SignatureProviderRequestError(
+            "Signer was not found on the "
+            "SignWell document."
         )
 
     # ========================================================
@@ -322,6 +290,7 @@ class NDAService:
     ) -> NDA:
 
         nda = self.repository.get_by_provider_document_id(
+            signature_provider=event.provider.value,
             provider_document_id=event.provider_document_id,
             for_update=True,
         )
@@ -519,28 +488,190 @@ class NDAService:
         return nda
 
     @staticmethod
-    def _build_document_fields(
-            *,
-            nda: NDA,
-    ) -> dict[str, str]:
-
+    @staticmethod
+    def _build_document_fields(*, nda: NDA) -> dict[str, str]:
         buyer_user = nda.match.buyer.user
         seller_user = nda.match.business.seller.user
+        business = nda.match.business
 
         buyer_name = (
-            f"{buyer_user.first_name} "
-            f"{buyer_user.last_name}"
+            f"{buyer_user.first_name} {buyer_user.last_name}"
         ).strip()
 
         seller_name = (
-            f"{seller_user.first_name} "
-            f"{seller_user.last_name}"
+            f"{seller_user.first_name} {seller_user.last_name}"
         ).strip()
+
+        if not business.legal_name:
+            raise NDAServiceError(
+                "Business legal name is required before creating an NDA."
+            )
 
         return {
             "buyer_name": buyer_name,
             "seller_name": seller_name,
-
-            # We need to use the ACTUAL Business name field here.
-            # Don't add this until we verify its column name.
+            "business_name": business.legal_name,
         }
+
+    async def _ensure_signature_document(
+            self,
+            *,
+            nda_id: UUID,
+            current_user_id: UUID,
+    ) -> NDA:
+
+        # --------------------------------------------------------
+        # Phase 1: inspect NDA
+        # --------------------------------------------------------
+
+        nda = self.repository.get_for_signing(
+            nda_id=nda_id,
+            for_update=False,
+        )
+
+        if nda is None:
+            raise NDANotFoundError(
+                f"NDA {nda_id} was not found."
+            )
+
+        self._get_signer_role(
+            nda=nda,
+            current_user_id=current_user_id,
+        )
+
+        self.verification_service.require_nda_eligibility(
+            match_id=nda.match_id,
+        )
+
+        if nda.provider_document_id is not None:
+            return nda
+
+        # End whatever read transaction SQLAlchemy currently has
+        # before taking the short initialization claim.
+        self.db.rollback()
+
+        # --------------------------------------------------------
+        # Phase 2: atomically claim initialization
+        # --------------------------------------------------------
+
+        claimed = (
+            self.repository.claim_signing_initialization(
+                nda_id=nda_id,
+            )
+        )
+
+        if not claimed:
+
+            self.db.rollback()
+
+            nda = self.repository.get_for_signing(
+                nda_id=nda_id,
+                for_update=False,
+            )
+
+            if nda is None:
+                raise NDANotFoundError(
+                    f"NDA {nda_id} was not found."
+                )
+
+            if nda.provider_document_id is not None:
+                return nda
+
+            raise NDASigningInitializationInProgressError(
+                "NDA signing is currently being initialized."
+            )
+
+        # COMMIT THE CLAIM.
+        #
+        # This releases the database row lock BEFORE we call
+        # SignWell.
+        self.db.commit()
+
+        # --------------------------------------------------------
+        # Phase 3: reload data required for provider
+        # --------------------------------------------------------
+
+        nda = self.repository.get_for_signing(
+            nda_id=nda_id,
+            for_update=False,
+        )
+
+        if nda is None:
+            raise NDANotFoundError(
+                f"NDA {nda_id} was not found."
+            )
+
+        buyer = self._build_signer(
+            nda=nda,
+            role=SignerRole.BUYER,
+        )
+
+        seller = self._build_signer(
+            nda=nda,
+            role=SignerRole.SELLER,
+        )
+
+        fields = self._build_document_fields(
+            nda=nda,
+        )
+
+        template_version = nda.version
+        # Finish the read transaction before external I/O.
+        # We now have everything SignWell needs as plain Python data.
+        # End the DB transaction before external network I/O.
+        self.db.rollback()
+
+        # --------------------------------------------------------
+        # Phase 4: external provider call
+        # --------------------------------------------------------
+
+        try:
+
+            document = (
+                await self.signature_provider.create_document(
+                    signers=[
+                        buyer,
+                        seller,
+                    ],
+                    template_version=nda.version,
+                    fields=fields,
+                )
+            )
+
+        except SignatureProviderError:
+
+            self.repository.mark_signing_initialization_failed(
+                nda_id=nda_id,
+            )
+
+            self.db.commit()
+
+            raise
+
+        # --------------------------------------------------------
+        # Phase 5: persist provider result
+        # --------------------------------------------------------
+
+        nda = self.repository.get_by_id(
+            nda_id,
+            for_update=True,
+        )
+
+        if nda is None:
+            self.db.rollback()
+
+            raise NDANotFoundError(
+                f"NDA {nda_id} was not found."
+            )
+
+        self.repository.attach_signature_provider(
+            nda=nda,
+            signature_provider=document.provider.value,
+            provider_document_id=document.provider_document_id,
+            provider_template_id=document.provider_template_id,
+        )
+
+        self.db.commit()
+        self.db.refresh(nda)
+
+        return nda

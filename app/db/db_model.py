@@ -34,7 +34,7 @@ from app.db.db_enum import (
     NotificationType,
     EventType,
     DeclarationStatus,
-    OutboxStatus, EventConsumer, BusinessType, SubIndustry, Industry, BusinessModel
+    OutboxStatus, EventConsumer, BusinessType, SubIndustry, Industry, BusinessModel, NDASigningInitializationStatus
 )
 
 
@@ -1798,6 +1798,15 @@ class NDA(Base):
     status: Mapped[NDAStatus] = mapped_column(
         String(30),
         default=NDAStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+
+    signing_initialization_status: Mapped[
+        NDASigningInitializationStatus
+    ] = mapped_column(
+        String(30),
+        default=NDASigningInitializationStatus.NOT_STARTED,
         nullable=False,
         index=True,
     )

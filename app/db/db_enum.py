@@ -99,6 +99,13 @@ class NDAStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class NDASigningInitializationStatus(str, Enum):
+    NOT_STARTED = "not_started"
+    INITIALIZING = "initializing"
+    READY = "ready"
+    FAILED = "failed"
+
+
 class NotificationType(str, Enum):
     NEW_MATCH = "new_match"
     MATCH_STATUS_CHANGED = "match_status_changed"
