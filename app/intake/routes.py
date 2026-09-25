@@ -51,6 +51,7 @@ from app.intake.schemas.responses import (
 from app.intake.schemas.seller import (
     SellerProfileCreate,
 )
+from app.intake.schemas.user import UserPersonalRead, UserPhoneUpsert
 from app.intake.validation.readiness import (
     business_readiness,
     buyer_preferences_readiness,
@@ -142,6 +143,69 @@ def _clean_idempotency_key(
 
     return cleaned
 
+
+
+# ============================================================
+# USER
+# ============================================================
+
+
+@router.get(
+    "/user",
+    response_model=UserPersonalRead,
+)
+def get_current_user(
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> UserPersonalRead:
+
+    user = repository.get_user_by_id(
+        current_user_id
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not exist.",
+        )
+
+    return UserPersonalRead.model_validate(
+        user
+    )
+
+
+@router.put(
+    "/user/phone",
+    response_model=UserPersonalRead,
+)
+def upsert_user_phone(
+    payload: UserPhoneUpsert,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> UserPersonalRead:
+
+    try:
+        user = repository.upsert_user_phone(
+            user_id=current_user_id,
+            data=payload,
+        )
+
+    except IntakeRepositoryError as exc:
+        _raise_http_error(
+            exc
+        )
+
+    return UserPersonalRead.model_validate(
+        user
+    )
 
 # ============================================================
 # BUYER PROFILE

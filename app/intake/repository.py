@@ -31,6 +31,7 @@ from app.intake.schemas.buyer_preferences import (
     BuyerPreferencesUpsert,
 )
 from app.intake.schemas.seller import SellerProfileCreate
+from app.intake.schemas.user import UserPhoneUpsert
 
 
 class IntakeRepositoryError(Exception):
@@ -94,6 +95,45 @@ class IntakeRepository:
             ) from exc
 
         self.session.refresh(entity)
+
+    # ========================================================
+    # USER
+    # ========================================================
+
+    def get_user_by_id(
+            self,
+            user_id: UUID,
+    ) -> User | None:
+
+        return self.session.scalar(
+            select(User).where(
+                User.id == user_id
+            )
+        )
+
+    def upsert_user_phone(
+            self,
+            *,
+            user_id: UUID,
+            data: UserPhoneUpsert,
+    ) -> User:
+
+        user = self.get_user_by_id(
+            user_id
+        )
+
+        if user is None:
+            raise IntakeNotFoundError(
+                "User does not exist."
+            )
+
+        user.phone = data.phone
+
+        self._commit_and_refresh(
+            user
+        )
+
+        return user
 
     # ========================================================
     # BUYER PROFILE

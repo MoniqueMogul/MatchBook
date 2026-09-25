@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import hashlib
+import hmac
+
 import httpx
 
 from app.nda.signing.base import SignatureProvider
@@ -39,15 +42,17 @@ class SignWellProvider(SignatureProvider):
     provider = SignatureProviderType.SIGNWELL
 
     def __init__(
-        self,
-        *,
-        api_key: str,
-        template_id: str,
-        test_mode: bool = True,
-        timeout: float = 15.0,
+            self,
+            *,
+            api_key: str,
+            template_id: str,
+            webhook_id: str,
+            test_mode: bool = True,
+            timeout: float = 15.0,
     ):
         self.api_key = api_key
         self.template_id = template_id
+        self.webhook_id = webhook_id
         self.test_mode = test_mode
         self.timeout = timeout
 
@@ -56,11 +61,12 @@ class SignWellProvider(SignatureProvider):
     # ========================================================
 
     async def create_document(
-        self,
-        *,
-        signers: list[Signer],
-        template_version: str,
-        fields: dict[str, str],
+            self,
+            *,
+            signers: list[Signer],
+            template_version: str,
+            reference_id: str,
+            fields: dict[str, str],
     ) -> SigningDocument:
 
         recipients = []
@@ -87,6 +93,7 @@ class SignWellProvider(SignatureProvider):
             "recipients": recipients,
             "metadata": {
                 "template_version": template_version,
+                "matchbook_reference_id": reference_id,
             },
         }
 
@@ -242,11 +249,11 @@ class SignWellProvider(SignatureProvider):
     # ========================================================
 
     async def parse_webhook(
-        self,
-        *,
-        payload: dict[str, Any],
-        headers: dict[str, str],
-        raw_body: bytes,
+            self,
+            *,
+            payload: dict[str, Any],
+            headers: dict[str, str],
+            raw_body: bytes,
     ) -> list[SigningEvent]:
 
         event_data = payload.get("event")
@@ -256,6 +263,11 @@ class SignWellProvider(SignatureProvider):
             raise SignatureWebhookVerificationError(
                 "SignWell webhook is missing event data."
             )
+
+        # Authenticate the webhook BEFORE trusting its contents.
+        self._verify_webhook_event(
+            event_data=event_data,
+        )
 
         if not isinstance(data, dict):
             raise SignatureWebhookVerificationError(
@@ -269,9 +281,7 @@ class SignWellProvider(SignatureProvider):
                 "SignWell webhook is missing document data."
             )
 
-        provider_document_id = (
-            webhook_document.get("id")
-        )
+        provider_document_id = webhook_document.get("id")
 
         if not provider_document_id:
             raise SignatureWebhookVerificationError(
@@ -280,34 +290,28 @@ class SignWellProvider(SignatureProvider):
 
         event_name = event_data.get("type")
 
-        if not event_name:
-            raise SignatureWebhookVerificationError(
-                "SignWell webhook is missing event type."
-            )
-
-        internal_event_type = (
-            SIGNWELL_EVENT_MAP.get(
-                event_name
-            )
+        internal_event_type = SIGNWELL_EVENT_MAP.get(
+            event_name
         )
 
-        # Ignore provider events Matchbook does not use.
+        # Authenticated SignWell event, but Matchbook does
+        # not care about this particular event type.
         if internal_event_type is None:
             return []
 
-        # Confirm the document through SignWell's authenticated
-        # API instead of trusting webhook document data alone.
+        # Second verification layer:
+        # retrieve authoritative document state directly
+        # from SignWell instead of trusting webhook document
+        # contents for signer identity.
         verified_document = (
             await self._get_document_data(
-                provider_document_id=(
-                    provider_document_id
-                ),
+                provider_document_id=provider_document_id,
             )
         )
 
         if (
-            verified_document.get("id")
-            != provider_document_id
+                verified_document.get("id")
+                != provider_document_id
         ):
             raise SignatureWebhookVerificationError(
                 "SignWell document verification failed."
@@ -321,8 +325,8 @@ class SignWellProvider(SignatureProvider):
         )
 
         if isinstance(
-            related_signer,
-            dict,
+                related_signer,
+                dict,
         ):
 
             signer_email = related_signer.get(
@@ -345,9 +349,9 @@ class SignWellProvider(SignatureProvider):
                     )
 
         if (
-            internal_event_type
-            == SigningEventType.SIGNER_SIGNED
-            and signer_role is None
+                internal_event_type
+                == SigningEventType.SIGNER_SIGNED
+                and signer_role is None
         ):
             raise SignatureWebhookVerificationError(
                 "SignWell signing event does not "
@@ -605,3 +609,51 @@ class SignWellProvider(SignatureProvider):
             OverflowError,
         ):
             return None
+
+    def _verify_webhook_event(
+            self,
+            *,
+            event_data: dict[str, Any],
+    ) -> None:
+
+        event_type = event_data.get("type")
+        event_time = event_data.get("time")
+        received_hash = event_data.get("hash")
+
+        if not isinstance(received_hash, str) or not received_hash:
+            raise SignatureWebhookVerificationError(
+                "SignWell webhook is missing or has an invalid event hash."
+            )
+
+        if not event_type:
+            raise SignatureWebhookVerificationError(
+                "SignWell webhook is missing event type."
+            )
+
+        if event_time is None:
+            raise SignatureWebhookVerificationError(
+                "SignWell webhook is missing event time."
+            )
+
+        if not received_hash:
+            raise SignatureWebhookVerificationError(
+                "SignWell webhook is missing event hash."
+            )
+
+        signed_payload = (
+            f"{event_type}@{event_time}"
+        ).encode("utf-8")
+
+        calculated_hash = hmac.new(
+            self.webhook_id.encode("utf-8"),
+            signed_payload,
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(
+                calculated_hash,
+                received_hash,
+        ):
+            raise SignatureWebhookVerificationError(
+                "SignWell webhook hash verification failed."
+            )
