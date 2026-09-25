@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.db_model import (
     Business,
+    BuyerFinancials,
     BuyerPreferences,
     BuyerProfile,
     OutboxEvent,
@@ -26,6 +27,9 @@ from app.intake.schemas.business import (
 from app.intake.schemas.buyer import (
     BuyerProfileCreate,
     BuyerProfileUpdate,
+)
+from app.intake.schemas.buyer_financials import (
+    BuyerFinancialsUpsert,
 )
 from app.intake.schemas.buyer_preferences import (
     BuyerPreferencesUpsert,
@@ -208,6 +212,71 @@ class IntakeRepository:
         self._commit_and_refresh(profile)
 
         return profile
+
+    # ========================================================
+    # BUYER FINANCIALS
+    # ========================================================
+
+    def get_buyer_financials_by_user_id(
+        self,
+        user_id: UUID,
+    ) -> BuyerFinancials | None:
+
+        statement = (
+            select(BuyerFinancials)
+            .join(
+                BuyerProfile,
+                BuyerFinancials.buyer_id
+                == BuyerProfile.id,
+            )
+            .where(
+                BuyerProfile.user_id == user_id
+            )
+        )
+
+        return self.session.scalar(statement)
+
+    def upsert_buyer_financials(
+        self,
+        user_id: UUID,
+        data: BuyerFinancialsUpsert,
+    ) -> BuyerFinancials:
+
+        profile = self.get_buyer_profile_by_user_id(
+            user_id
+        )
+
+        if profile is None:
+            raise IntakeNotFoundError(
+                "Create the buyer profile before "
+                "saving financial information."
+            )
+
+        financials = (
+            self.get_buyer_financials_by_user_id(
+                user_id
+            )
+        )
+
+        changes = data.model_dump(
+            exclude_unset=True
+        )
+
+        if financials is None:
+            financials = BuyerFinancials(
+                buyer_id=profile.id,
+                **changes,
+            )
+
+            self.session.add(financials)
+
+        else:
+            for field, value in changes.items():
+                setattr(financials, field, value)
+
+        self._commit_and_refresh(financials)
+
+        return financials
 
     # ========================================================
     # BUYER PREFERENCES
