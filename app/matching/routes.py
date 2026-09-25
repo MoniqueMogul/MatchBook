@@ -135,6 +135,7 @@ def get_match_detail(
         matching_version=match.matching_version,
         business=BusinessMatchSummary.model_validate(match.business),
         dimensions=dimensions,
+        nda=match.nda,
         created_at=match.created_at,
         updated_at=match.updated_at,
     )

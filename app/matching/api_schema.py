@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.db.db_enum import MatchStatus
+from app.db.db_enum import MatchStatus, NDAStatus
 
 
 class MatchingAPIModel(BaseModel):
@@ -77,6 +77,15 @@ class MatchDimensionResponse(MatchingAPIModel):
     contribution: float
 
 
+class MatchNDAResponse(MatchingAPIModel):
+    id: UUID
+    status: NDAStatus
+
+    buyer_signed_at: datetime | None
+    seller_signed_at: datetime | None
+    completed_at: datetime | None
+
+
 class MatchDetailResponse(MatchingAPIModel):
     """
     Detailed deterministic explanation for one Match.
@@ -92,6 +101,8 @@ class MatchDetailResponse(MatchingAPIModel):
     business: BusinessMatchSummary
 
     dimensions: list[MatchDimensionResponse]
+
+    nda: MatchNDAResponse | None
 
     created_at: datetime
     updated_at: datetime
