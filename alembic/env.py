@@ -59,10 +59,10 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     load_dotenv()
 
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    MATCHBOOK_DATABASE_URL = os.getenv("MATCHBOOK_DATABASE_URL")
 
     connectable = create_engine(
-        DATABASE_URL,
+        MATCHBOOK_DATABASE_URL,
         poolclass=pool.NullPool,
     )
 
