@@ -25,14 +25,14 @@ load_dotenv()
 # DATABASE CONFIGURATION
 # ============================================================
 
-DEFAULT_DATABASE_URL = (
+MATCHBOOK_DEFAULT_DATABASE_URL = (
     "postgresql+psycopg://"
     "postgres:postgres@localhost:5432/matchbook"
 )
 
-DATABASE_URL = os.getenv(
+MATCHBOOK_DATABASE_URL = os.getenv(
     "MATCHBOOK_DATABASE_URL",
-    DEFAULT_DATABASE_URL,
+    MATCHBOOK_DEFAULT_DATABASE_URL,
 )
 
 
@@ -41,7 +41,7 @@ DATABASE_URL = os.getenv(
 # ============================================================
 
 engine = create_engine(
-    DATABASE_URL,
+    MATCHBOOK_DATABASE_URL,
     pool_pre_ping=True,
 )
 
