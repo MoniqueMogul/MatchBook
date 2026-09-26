@@ -131,6 +131,138 @@ def test_unauthorized_user_cannot_read_document():
         service.get_owned_document(uuid4(), uuid4())
 
 
+def test_owner_can_list_buyer_documents_after_authorization():
+    service, _, _, _, _ = make_service()
+    user_id, financials_id = uuid4(), uuid4()
+    documents = [object(), object()]
+    service.repository.list_documents_for_buyer_financials.return_value = documents
+
+    result = service.list_owned_documents(
+        user_id,
+        buyer_financials_id=financials_id,
+    )
+
+    assert result == documents
+    service.repository.require_owned_buyer_financials.assert_called_once_with(
+        financials_id,
+        user_id,
+    )
+    service.repository.list_documents_for_buyer_financials.assert_called_once_with(
+        financials_id
+    )
+
+
+def test_owner_can_list_business_documents_after_authorization():
+    service, _, _, _, _ = make_service()
+    user_id, financials_id = uuid4(), uuid4()
+    documents = [object()]
+    service.repository.list_documents_for_business_financials.return_value = documents
+
+    result = service.list_owned_documents(
+        user_id,
+        business_financials_id=financials_id,
+    )
+
+    assert result == documents
+    service.repository.require_owned_business_financials.assert_called_once_with(
+        financials_id,
+        user_id,
+    )
+    service.repository.list_documents_for_business_financials.assert_called_once_with(
+        financials_id
+    )
+
+
+@pytest.mark.parametrize("owner_kind", ["buyer", "business"])
+def test_another_user_cannot_list_financial_documents(owner_kind):
+    service, _, _, _, _ = make_service()
+    financials_id = uuid4()
+    ownership_check = (
+        service.repository.require_owned_buyer_financials
+        if owner_kind == "buyer"
+        else service.repository.require_owned_business_financials
+    )
+    list_documents = (
+        service.repository.list_documents_for_buyer_financials
+        if owner_kind == "buyer"
+        else service.repository.list_documents_for_business_financials
+    )
+    ownership_check.side_effect = ResourceNotFoundError("not found")
+    scope = {f"{owner_kind}_financials_id": financials_id}
+
+    with pytest.raises(ResourceNotFoundError):
+        service.list_owned_documents(uuid4(), **scope)
+
+    list_documents.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [{}, {"buyer_financials_id": uuid4(), "business_financials_id": uuid4()}],
+)
+def test_document_list_requires_exactly_one_scope(scope):
+    service, _, _, _, _ = make_service()
+
+    with pytest.raises(InvalidVerificationRequest):
+        service.list_owned_documents(uuid4(), **scope)
+
+    service.repository.require_owned_buyer_financials.assert_not_called()
+    service.repository.require_owned_business_financials.assert_not_called()
+
+
+def test_empty_owned_document_collection_returns_empty_list():
+    service, _, _, _, _ = make_service()
+    service.repository.list_documents_for_buyer_financials.return_value = []
+
+    assert service.list_owned_documents(
+        uuid4(), buyer_financials_id=uuid4()
+    ) == []
+
+
+def test_document_query_orders_by_uploaded_at_then_id_descending():
+    from unittest.mock import MagicMock
+
+    from app.verification.repositories import VerificationRepository
+
+    session = MagicMock()
+    session.scalars.return_value.all.return_value = []
+    repository = VerificationRepository(session)
+
+    repository.list_documents_for_buyer_financials(uuid4())
+    statement = session.scalars.call_args.args[0]
+    order = statement._order_by_clauses
+
+    assert len(order) == 2
+    assert str(order[0]) == "documents.uploaded_at DESC"
+    assert str(order[1]) == "documents.id DESC"
+    repository.list_documents_for_business_financials(uuid4())
+    business_statement = session.scalars.call_args.args[0]
+    business_order = business_statement._order_by_clauses
+    assert str(business_order[0]) == "documents.uploaded_at DESC"
+    assert str(business_order[1]) == "documents.id DESC"
+
+
+def test_owned_business_with_no_documents_returns_empty_list():
+    service, _, _, _, _ = make_service()
+    service.repository.list_documents_for_business_financials.return_value = []
+
+    assert service.list_owned_documents(
+        uuid4(), business_financials_id=uuid4()
+    ) == []
+
+
+def test_existing_get_owned_document_remains_available(document):
+    service, _, _, _, _ = make_service()
+    user_id = uuid4()
+    service.repository.require_owned_document.return_value = document
+
+    assert service.get_owned_document(document.id, user_id) is document
+    service.repository.require_owned_document.assert_called_once_with(
+        document.id,
+        user_id,
+    )
+
+
 def test_unauthorized_user_cannot_confirm_document():
     service, _, _, dispatched, _ = make_service()
     service.repository.require_owned_document.side_effect = ResourceNotFoundError(
