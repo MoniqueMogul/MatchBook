@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MATCHBOOK_DATABASE_URL = os.getenv("DATABASE_URL")
+MATCHBOOK_DATABASE_URL = os.getenv("MATCHBOOK_DATABASE_URL")
 
 if not MATCHBOOK_DATABASE_URL:
     raise RuntimeError(
