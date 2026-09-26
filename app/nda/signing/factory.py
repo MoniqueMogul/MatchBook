@@ -23,17 +23,24 @@ def build_signature_provider() -> SignatureProvider:
 
     if provider_type == SignatureProviderType.SIGNWELL:
 
-        api_key = os.getenv("SIGNWELL_API_KEY")
+        api_key = os.getenv(
+            "SIGNWELL_API_KEY"
+        )
+
         template_id = os.getenv(
             "SIGNWELL_NDA_TEMPLATE_ID"
         )
 
+        webhook_id = os.getenv(
+            "SIGNWELL_WEBHOOK_ID"
+        )
+
         test_mode = (
-            os.getenv(
-                "SIGNWELL_TEST_MODE",
-                "true",
-            ).lower()
-            == "true"
+                os.getenv(
+                    "SIGNWELL_TEST_MODE",
+                    "true",
+                ).lower()
+                == "true"
         )
 
         if not api_key:
@@ -46,9 +53,15 @@ def build_signature_provider() -> SignatureProvider:
                 "SIGNWELL_NDA_TEMPLATE_ID is not configured."
             )
 
+        if not webhook_id:
+            raise RuntimeError(
+                "SIGNWELL_WEBHOOK_ID is not configured."
+            )
+
         return SignWellProvider(
             api_key=api_key,
             template_id=template_id,
+            webhook_id=webhook_id,
             test_mode=test_mode,
         )
 

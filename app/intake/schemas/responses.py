@@ -29,8 +29,6 @@ class BuyerProfileRead(IntakeModel):
     state: str | None = None
     zip_code: str | None = None
 
-    verification_status: VerificationStatus
-
     created_at: datetime
     updated_at: datetime
 
@@ -114,7 +112,6 @@ class BusinessRead(IntakeModel):
     deal_preference: DealPreference | None = None
     preferred_sale_timeline: str | None = None
 
-    verification_status: VerificationStatus
     status: BusinessStatus
 
     created_at: datetime

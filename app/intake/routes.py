@@ -16,7 +16,7 @@ from app.auth.dependencies import (
 )
 from app.db.taxonomy import get_industry_options, get_business_model_options
 from app.intake.dependencies import (
-    get_intake_repository,
+    get_intake_repository, get_intake_service,
 )
 from app.intake.locationiq import (
     LocationAutocompleteConfigurationError,
@@ -51,6 +51,8 @@ from app.intake.schemas.responses import (
 from app.intake.schemas.seller import (
     SellerProfileCreate,
 )
+from app.intake.schemas.user import UserPersonalRead, UserPhoneUpsert
+from app.intake.service import IntakeService
 from app.intake.validation.readiness import (
     business_readiness,
     buyer_preferences_readiness,
@@ -63,23 +65,10 @@ router = APIRouter(
 )
 
 
-def _enqueue_outbox_event(
-    event_id: UUID,
-) -> None:
-    """Load the worker lazily so routes remain config-independent."""
-
-    from app.events.tasks import send_outbox_event
-
-    send_outbox_event.delay(
-        str(event_id)
-    )
-
-
 @router.get("/locations/autocomplete", response_model=list[TargetLocation])
 def get_location_autocomplete(
     q: str = Query(..., min_length=3, max_length=200),
     limit: int = Query(8, ge=1, le=20),
-    current_user_id: UUID = Depends(get_current_user_id),
 ) -> list[TargetLocation]:
     try:
         return autocomplete_locations(q, limit)
@@ -143,32 +132,58 @@ def _clean_idempotency_key(
     return cleaned
 
 
+
 # ============================================================
-# BUYER PROFILE
+# USER
 # ============================================================
 
 
-@router.post(
-    "/buyers/profile",
-    response_model=BuyerProfileRead,
-    status_code=status.HTTP_201_CREATED,
+@router.get(
+    "/user",
+    response_model=UserPersonalRead,
 )
-def create_buyer_profile(
-    payload: BuyerProfileCreate,
+def get_current_user(
     current_user_id: UUID = Depends(
         get_current_user_id
     ),
     repository: IntakeRepository = Depends(
         get_intake_repository
     ),
-) -> BuyerProfileRead:
+) -> UserPersonalRead:
+
+    user = repository.get_user_by_id(
+        current_user_id
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not exist.",
+        )
+
+    return UserPersonalRead.model_validate(
+        user
+    )
+
+
+@router.put(
+    "/user/phone",
+    response_model=UserPersonalRead,
+)
+def upsert_user_phone(
+    payload: UserPhoneUpsert,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> UserPersonalRead:
 
     try:
-        profile, outbox_event = (
-            repository.create_buyer_profile(
-                current_user_id,
-                payload,
-            )
+        user = repository.upsert_user_phone(
+            user_id=current_user_id,
+            data=payload,
         )
 
     except IntakeRepositoryError as exc:
@@ -176,13 +191,46 @@ def create_buyer_profile(
             exc
         )
 
-    _enqueue_outbox_event(
-        outbox_event.id
+    return UserPersonalRead.model_validate(
+        user
     )
+
+# ============================================================
+# BUYER PROFILE
+# ============================================================
+
+
+@router.put(
+    "/buyers/profile",
+    response_model=BuyerProfileRead,
+    status_code=status.HTTP_200_OK,
+)
+def upsert_buyer_profile(
+    payload: BuyerProfileCreate,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    service: IntakeService = Depends(
+        get_intake_service
+    ),
+) -> BuyerProfileRead:
+
+    try:
+        profile = service.upsert_buyer_profile(
+            current_user_id,
+            payload,
+        )
+
+    except IntakeRepositoryError as exc:
+        _raise_http_error(
+            exc
+        )
 
     return BuyerProfileRead.model_validate(
         profile
     )
+
+
 
 @router.get(
     "/buyers/profile",
@@ -210,38 +258,6 @@ def get_buyer_profile(
                 "Buyer profile does not exist "
                 "for this user."
             ),
-        )
-
-    return BuyerProfileRead.model_validate(
-        profile
-    )
-
-
-@router.patch(
-    "/buyers/profile",
-    response_model=BuyerProfileRead,
-)
-def update_buyer_profile(
-    payload: BuyerProfileUpdate,
-    current_user_id: UUID = Depends(
-        get_current_user_id
-    ),
-    repository: IntakeRepository = Depends(
-        get_intake_repository
-    ),
-) -> BuyerProfileRead:
-
-    try:
-        profile = (
-            repository.update_buyer_profile(
-                current_user_id,
-                payload,
-            )
-        )
-
-    except IntakeRepositoryError as exc:
-        _raise_http_error(
-            exc
         )
 
     return BuyerProfileRead.model_validate(
@@ -290,20 +306,21 @@ def get_buyer_preferences(
 @router.put(
     "/buyers/preferences",
     response_model=BuyerPreferencesRead,
+    status_code=status.HTTP_200_OK,
 )
 def upsert_buyer_preferences(
     payload: BuyerPreferencesUpsert,
     current_user_id: UUID = Depends(
         get_current_user_id
     ),
-    repository: IntakeRepository = Depends(
-        get_intake_repository
+    service: IntakeService = Depends(
+        get_intake_service
     ),
 ) -> BuyerPreferencesRead:
 
     try:
         preferences = (
-            repository.upsert_buyer_preferences(
+            service.upsert_buyer_preferences(
                 current_user_id,
                 payload,
             )
@@ -317,7 +334,6 @@ def upsert_buyer_preferences(
     return BuyerPreferencesRead.model_validate(
         preferences
     )
-
 
 @router.get(
     "/buyers/readiness",
@@ -442,6 +458,7 @@ def get_seller_profile(
 # ============================================================
 
 
+
 @router.post(
     "/sellers/businesses",
     response_model=BusinessRead,
@@ -458,8 +475,8 @@ def create_business(
     current_user_id: UUID = Depends(
         get_current_user_id
     ),
-    repository: IntakeRepository = Depends(
-        get_intake_repository
+    service: IntakeService = Depends(
+        get_intake_service
     ),
 ) -> BusinessRead:
 
@@ -468,11 +485,7 @@ def create_business(
     )
 
     try:
-        (
-            business,
-            was_created,
-            outbox_event,
-        ) = repository.create_business(
+        business = service.create_business(
             current_user_id,
             payload,
             cleaned_key,
@@ -481,11 +494,6 @@ def create_business(
     except IntakeRepositoryError as exc:
         _raise_http_error(
             exc
-        )
-
-    if was_created:
-        _enqueue_outbox_event(
-            outbox_event.id
         )
 
     return BusinessRead.model_validate(
@@ -560,9 +568,10 @@ def get_business(
     )
 
 
-@router.patch(
+@router.put(
     "/sellers/businesses/{business_id}",
     response_model=BusinessRead,
+    status_code=status.HTTP_200_OK,
 )
 def update_business(
     business_id: UUID,
@@ -570,18 +579,16 @@ def update_business(
     current_user_id: UUID = Depends(
         get_current_user_id
     ),
-    repository: IntakeRepository = Depends(
-        get_intake_repository
+    service: IntakeService = Depends(
+        get_intake_service
     ),
 ) -> BusinessRead:
 
     try:
-        business = (
-            repository.update_business(
-                current_user_id,
-                business_id,
-                payload,
-            )
+        business = service.update_business(
+            current_user_id,
+            business_id,
+            payload,
         )
 
     except IntakeRepositoryError as exc:
@@ -592,7 +599,6 @@ def update_business(
     return BusinessRead.model_validate(
         business
     )
-
 
 @router.get(
     "/sellers/businesses/{business_id}/readiness",

@@ -1,3 +1,4 @@
+from datetime import timedelta, datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -12,6 +13,10 @@ from app.db.db_model import (
     Business,
 )
 
+
+SIGNING_INITIALIZATION_TIMEOUT = timedelta(
+    minutes=2
+)
 
 class NDARepository:
 
@@ -166,6 +171,8 @@ class NDARepository:
             NDASigningInitializationStatus.READY
         )
 
+        nda.signing_initialization_started_at = None
+
         self.db.flush()
 
         return nda
@@ -179,8 +186,10 @@ class NDARepository:
         Atomically claim responsibility for creating the external
         signature document.
 
-        Returns True only for the request that successfully
-        claimed initialization.
+        An active initialization claim blocks concurrent requests.
+
+        A stale initialization claim may be reclaimed after the
+        initialization timeout.
         """
 
         nda = self.get_by_id(
@@ -191,18 +200,39 @@ class NDARepository:
         if nda is None:
             return False
 
+        # Provider document already exists.
+        # There is nothing left to initialize.
         if nda.provider_document_id is not None:
             return False
+
+        now = datetime.now(timezone.utc)
 
         if (
                 nda.signing_initialization_status
                 == NDASigningInitializationStatus.INITIALIZING
         ):
-            return False
+            started_at = (
+                nda.signing_initialization_started_at
+            )
 
+            # INITIALIZING without a timestamp is an invalid/stale
+            # legacy state. Allow it to be reclaimed.
+            if started_at is not None:
+                stale_before = (
+                        now
+                        - SIGNING_INITIALIZATION_TIMEOUT
+                )
+
+                if started_at > stale_before:
+                    # Another request still owns a live claim.
+                    return False
+
+        # NOT_STARTED, FAILED, or stale INITIALIZING can claim.
         nda.signing_initialization_status = (
             NDASigningInitializationStatus.INITIALIZING
         )
+
+        nda.signing_initialization_started_at = now
 
         self.db.flush()
 

@@ -87,6 +87,9 @@ def send_outbox_event(event_id: str) -> None:
 
         raise
 
+    finally:
+        session.close()
+
 def _record_publish_failure(
         *,
         event_id: str,
