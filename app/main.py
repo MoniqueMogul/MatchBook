@@ -45,17 +45,21 @@ app = FastAPI(
 
 
 app.add_middleware(
+    RequestLogMiddleware
+)
+
+app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://matchbookmarket.store",
+        "https://www.matchbookmarket.store",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.add_middleware(RequestLogMiddleware)
 
 # ============================================================
 # APPLICATION HEALTH
