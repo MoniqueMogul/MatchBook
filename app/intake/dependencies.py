@@ -1,10 +1,12 @@
 from collections.abc import Generator
 
+from app.intake.repository import IntakeRepository
+
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from app.intake.repository import IntakeRepository
-
+from app.db.session import get_db
+from app.intake.service import IntakeService
 
 def get_db_session() -> Generator[
     Session,
@@ -36,5 +38,14 @@ def get_intake_repository(
 ) -> IntakeRepository:
 
     return IntakeRepository(
+        session
+    )
+
+
+def get_intake_service(
+    session: Session = Depends(get_db),
+) -> IntakeService:
+
+    return IntakeService(
         session
     )

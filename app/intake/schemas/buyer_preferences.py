@@ -31,7 +31,7 @@ class BuyerPreferencesUpsert(IntakeModel):
 
     target_business_models: list[BusinessModel] | None = None
 
-    target_business_types: BusinessType | None = None
+    target_business_types: list[BusinessType] | None = None
 
     target_locations: list[TargetLocation] | None = None
 
