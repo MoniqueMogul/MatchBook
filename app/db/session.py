@@ -13,6 +13,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # LOAD ENVIRONMENT VARIABLES
@@ -64,27 +68,20 @@ SessionLocal = sessionmaker(
 # ============================================================
 
 def check_database_connection() -> bool:
-    """
-    Test whether the configured PostgreSQL database can be reached.
-
-    Uses SELECT 1 only.
-
-    No records are inserted, updated, or deleted.
-    """
-
     try:
         with engine.connect() as connection:
             result = connection.execute(
                 text("SELECT 1")
             )
 
-            return (
-                result.scalar_one()
-                == 1
-            )
+            return result.scalar_one() == 1
 
     except SQLAlchemyError:
+        logger.exception("Database health check failed")
         return False
+
+
+
 
 
 # ============================================================
