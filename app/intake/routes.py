@@ -38,6 +38,10 @@ from app.intake.schemas.buyer import (
     BuyerProfileCreate,
     BuyerProfileUpdate,
 )
+from app.intake.schemas.buyer_financials import (
+    BuyerFinancialsRead,
+    BuyerFinancialsUpsert,
+)
 from app.intake.schemas.buyer_preferences import (
     BuyerPreferencesUpsert,
 )
@@ -262,6 +266,74 @@ def get_buyer_profile(
 
     return BuyerProfileRead.model_validate(
         profile
+    )
+
+
+# ============================================================
+# BUYER FINANCIALS
+# ============================================================
+
+
+@router.get(
+    "/buyers/financials",
+    response_model=BuyerFinancialsRead,
+)
+def get_buyer_financials(
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> BuyerFinancialsRead:
+
+    financials = (
+        repository.get_buyer_financials_by_user_id(
+            current_user_id
+        )
+    )
+
+    if financials is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Buyer financial information does not "
+                "exist for this user."
+            ),
+        )
+
+    return BuyerFinancialsRead.model_validate(
+        financials
+    )
+
+
+@router.put(
+    "/buyers/financials",
+    response_model=BuyerFinancialsRead,
+)
+def upsert_buyer_financials(
+    payload: BuyerFinancialsUpsert,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> BuyerFinancialsRead:
+
+    try:
+        financials = (
+            repository.upsert_buyer_financials(
+                current_user_id,
+                payload,
+            )
+        )
+
+    except IntakeRepositoryError as exc:
+        _raise_http_error(exc)
+
+    return BuyerFinancialsRead.model_validate(
+        financials
     )
 
 
