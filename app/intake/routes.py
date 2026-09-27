@@ -23,7 +23,9 @@ from app.intake.locationiq import (
     LocationAutocompleteProviderError,
     autocomplete_locations,
 )
-from app.intake.schemas.common import TargetLocation
+from app.intake.schemas.common import (
+    LocationAutocompleteResult,
+)
 from app.intake.repository import (
     IntakeConflictError,
     IntakeNotFoundError,
@@ -65,11 +67,14 @@ router = APIRouter(
 )
 
 
-@router.get("/locations/autocomplete", response_model=list[TargetLocation])
+@router.get(
+    "/locations/autocomplete",
+    response_model=list[LocationAutocompleteResult],
+)
 def get_location_autocomplete(
     q: str = Query(..., min_length=3, max_length=200),
     limit: int = Query(8, ge=1, le=20),
-) -> list[TargetLocation]:
+) -> list[LocationAutocompleteResult]:
     try:
         return autocomplete_locations(q, limit)
     except LocationAutocompleteConfigurationError:
