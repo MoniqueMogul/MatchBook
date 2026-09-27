@@ -10,7 +10,9 @@ from urllib.request import urlopen
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from app.intake.schemas.common import TargetLocation
+from app.intake.schemas.common import (
+    LocationAutocompleteResult,
+)
 
 
 class LocationAutocompleteError(Exception):
@@ -25,7 +27,10 @@ class LocationAutocompleteProviderError(LocationAutocompleteError):
     """LocationIQ could not supply a usable response."""
 
 
-def autocomplete_locations(q: str, limit: int = 8) -> list[TargetLocation]:
+def autocomplete_locations(
+        q: str,
+        limit: int = 8,
+) -> list[LocationAutocompleteResult]:
     load_dotenv()
     key = os.getenv("LOCATIONIQ_API_KEY", "").strip()
     if not key:
@@ -75,7 +80,7 @@ def autocomplete_locations(q: str, limit: int = 8) -> list[TargetLocation]:
             if isinstance(address.get(field), str) and address[field].strip()
         ), None)
         try:
-            locations.append(TargetLocation(
+            locations.append(LocationAutocompleteResult(
                 provider="locationiq",
                 place_id=str(place_id),
                 display_name=row.get("display_name"),

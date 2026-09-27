@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.db.db_enum import Industry, SubIndustry, BusinessModel
@@ -70,6 +72,98 @@ class TargetLocation(IntakeModel):
                 self.country_code,
             )
         )
+
+class LocationAutocompleteResult(IntakeModel):
+    """
+    Rich provider result used only by location autocomplete.
+
+    Buyer preferences persist the smaller TargetLocation model.
+    """
+
+    provider: Literal["locationiq"]
+
+    place_id: str = Field(
+        min_length=1,
+        max_length=255,
+    )
+
+    display_name: str = Field(
+        min_length=1,
+        max_length=500,
+    )
+
+    latitude: float = Field(
+        ge=-90,
+        le=90,
+    )
+
+    longitude: float = Field(
+        ge=-180,
+        le=180,
+    )
+
+    city: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    county: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    state: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    country: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    country_code: str | None = Field(
+        default=None,
+        max_length=20,
+    )
+
+    @field_validator(
+        "city",
+        "county",
+        "state",
+        "country",
+        mode="before",
+    )
+    @classmethod
+    def blank_string_becomes_none(
+            cls,
+            value: str | None,
+    ) -> str | None:
+
+        if value is None or not isinstance(value, str):
+            return value
+
+        value = value.strip()
+
+        return value or None
+
+    @field_validator(
+        "country_code",
+        mode="before",
+    )
+    @classmethod
+    def normalize_country_code(
+            cls,
+            value: str | None,
+    ) -> str | None:
+
+        if value is None or not isinstance(value, str):
+            return value
+
+        value = value.strip()
+
+        return value.upper() or None
+
 
 class TargetIndustryPreference(IntakeModel):
     industry: Industry

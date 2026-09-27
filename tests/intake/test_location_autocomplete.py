@@ -1,18 +1,62 @@
+import sys
+from types import ModuleType
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
-from tests.intake.test_routes import build_client
+
+fake_auth_module = ModuleType(
+    "app.auth.auth"
+)
+
+fake_auth_module.supabase = MagicMock()
+
+sys.modules.setdefault(
+    "app.auth.auth",
+    fake_auth_module,
+)
+
+
 from app.auth.dependencies import get_current_user_id
 from app.intake.locationiq import (
     LocationAutocompleteConfigurationError,
     LocationAutocompleteProviderError,
 )
-from app.intake.schemas.common import TargetLocation
+from app.intake.routes import router
+from app.intake.schemas.common import (
+    LocationAutocompleteResult,
+)
 
+
+def build_client(
+        _repository: object,
+) -> tuple[TestClient, object]:
+
+    authenticated_user_id = uuid4()
+
+    app = FastAPI()
+
+    app.include_router(
+        router,
+        dependencies=[
+            Depends(get_current_user_id),
+        ],
+    )
+
+    app.dependency_overrides[
+        get_current_user_id
+    ] = lambda: authenticated_user_id
+
+    return (
+        TestClient(app),
+        authenticated_user_id,
+    )
 
 def test_authenticated_results_and_limit():
-    selected = TargetLocation(
+    selected = LocationAutocompleteResult(
         provider="locationiq", place_id="123", display_name="Calgary, Canada",
         latitude=51.05, longitude=-114.07, country_code="ca",
     )
