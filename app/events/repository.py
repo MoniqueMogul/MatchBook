@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, insert
 from sqlalchemy.orm import Session
 
 from app.db.db_enum import OutboxStatus, EventConsumer
@@ -48,21 +48,40 @@ class OutboxRepository:
     # ========================================================
 
     def create_event(
-        self,
-        data: OutboxEventCreate,
+            self,
+            data: OutboxEventCreate,
     ) -> OutboxEvent:
 
-        event = OutboxEvent(
-            **data.model_dump(),
+        values = data.model_dump()
+
+        statement = (
+            insert(OutboxEvent)
+            .values(**values)
+            .on_conflict_do_nothing(
+                index_elements=[
+                    OutboxEvent.idempotency_key
+                ]
+            )
+            .returning(OutboxEvent)
         )
 
-        self.session.add(
-            event
+        event = self.session.scalars(
+            statement
+        ).one_or_none()
+
+        if event is not None:
+            return event
+
+        existing = self.get_by_idempotency_key(
+            data.idempotency_key
         )
 
-        self.session.flush()
+        if existing is None:
+            raise OutboxRepositoryError(
+                "Outbox event could not be created or retrieved."
+            )
 
-        return event
+        return existing
 
     # ========================================================
     # READ
