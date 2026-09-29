@@ -52,29 +52,19 @@ class OutboxRepository:
             data: OutboxEventCreate,
     ) -> OutboxEvent:
 
-        values = data.model_dump()
-
-        statement = (
-            insert(OutboxEvent)
-            .values(**values)
-            .on_conflict_do_nothing(
-                index_elements=[
-                    OutboxEvent.idempotency_key
-                ]
-            )
-            .returning(OutboxEvent)
-        )
-
-        event = self.session.scalars(
-            statement
-        ).one_or_none()
-
-        if event is not None:
-            return event
-
         existing = self.get_by_idempotency_key(
             data.idempotency_key
         )
+
+        if existing is not None:
+            return existing
+
+        event = OutboxEvent(
+            **data.model_dump()
+        )
+
+        self.session.add(event)
+        self.session.flush()
 
         if existing is None:
             raise OutboxRepositoryError(

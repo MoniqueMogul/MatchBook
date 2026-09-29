@@ -17,6 +17,7 @@ def publish_event(
     # ----------------------------------------------------
 
     if event_type in {
+        EventType.BUYER_CREATED,
         EventType.BUYER_PREFERENCES_UPDATED,
         EventType.BUSINESS_CREATED,
         EventType.BUSINESS_UPDATED,
