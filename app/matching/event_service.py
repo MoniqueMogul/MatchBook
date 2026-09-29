@@ -55,14 +55,15 @@ def process_matching_event(
     # ROUTING
     # ----------------------------------------------------
 
-    if (
-        event.event_type
-        == EventType.BUYER_PREFERENCES_UPDATED
-    ):
+    if event.event_type in {
+        EventType.BUYER_CREATED,
+        EventType.BUYER_PREFERENCES_UPDATED,
+    }:
         match_buyer(
             repository=repository,
             buyer_id=event.entity_id,
         )
+
 
     elif event.event_type in {
         EventType.BUSINESS_CREATED,
