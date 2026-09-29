@@ -66,12 +66,7 @@ class OutboxRepository:
         self.session.add(event)
         self.session.flush()
 
-        if existing is None:
-            raise OutboxRepositoryError(
-                "Outbox event could not be created or retrieved."
-            )
-
-        return existing
+        return event
 
     # ========================================================
     # READ
