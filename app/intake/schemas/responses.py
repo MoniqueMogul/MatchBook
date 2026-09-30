@@ -128,6 +128,6 @@ class ReadinessResponse(IntakeModel):
     missing_fields: tuple[str, ...]
 
 
-class ProfileImageURLResponse(BaseModel):
+class ProfileImageURLResponse(IntakeModel):
     url: str
     expires_in_seconds: int
