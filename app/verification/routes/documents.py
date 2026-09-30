@@ -64,6 +64,23 @@ def trigger_verification(
         raise _http_error(exc) from exc
 
 
+@router.get("", response_model=list[DocumentResponse])
+def list_documents(
+    buyer_financials_id: UUID | None = None,
+    business_financials_id: UUID | None = None,
+    user_id: UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[DocumentResponse]:
+    try:
+        return _service(db).list_owned_documents(
+            user_id,
+            buyer_financials_id=buyer_financials_id,
+            business_financials_id=business_financials_id,
+        )
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 def get_document(
     document_id: UUID,

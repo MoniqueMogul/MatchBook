@@ -86,6 +86,30 @@ class VerificationRepository:
             raise ResourceNotFoundError("Business financials not found")
         return financials
 
+    def list_documents_for_buyer_financials(
+        self,
+        financials_id: UUID,
+    ) -> list[Document]:
+        return list(
+            self.session.scalars(
+                select(Document)
+                .where(Document.buyer_financials_id == financials_id)
+                .order_by(Document.uploaded_at.desc(), Document.id.desc())
+            ).all()
+        )
+
+    def list_documents_for_business_financials(
+        self,
+        financials_id: UUID,
+    ) -> list[Document]:
+        return list(
+            self.session.scalars(
+                select(Document)
+                .where(Document.business_financials_id == financials_id)
+                .order_by(Document.uploaded_at.desc(), Document.id.desc())
+            ).all()
+        )
+
     def require_owned_business(
         self,
         business_id: UUID,

@@ -105,6 +105,36 @@ class DocumentService:
     def get_owned_document(self, document_id: UUID, user_id: UUID) -> Document:
         return self.repository.require_owned_document(document_id, user_id)
 
+    def list_owned_documents(
+        self,
+        user_id: UUID,
+        *,
+        buyer_financials_id: UUID | None = None,
+        business_financials_id: UUID | None = None,
+    ) -> list[Document]:
+        if (buyer_financials_id is None) == (business_financials_id is None):
+            raise InvalidVerificationRequest(
+                "Exactly one financials ID must be supplied"
+            )
+
+        if buyer_financials_id is not None:
+            self.repository.require_owned_buyer_financials(
+                buyer_financials_id,
+                user_id,
+            )
+            return self.repository.list_documents_for_buyer_financials(
+                buyer_financials_id
+            )
+
+        assert business_financials_id is not None
+        self.repository.require_owned_business_financials(
+            business_financials_id,
+            user_id,
+        )
+        return self.repository.list_documents_for_business_financials(
+            business_financials_id
+        )
+
     def confirm_upload(self, document_id: UUID, user_id: UUID) -> Document:
         document = self.repository.require_owned_document(document_id, user_id)
         if document.verification_status == VerificationStatus.UPLOADING:
