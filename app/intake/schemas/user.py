@@ -21,5 +21,23 @@ class UserPersonalRead(BaseModel):
     phone: str | None
     first_name: str
     last_name: str
+
+    profile_image_key: str | None = None
+
     created_at: datetime
     updated_at: datetime
+
+
+class ProfileImageUploadRequest(BaseModel):
+    content_type: str
+
+
+class ProfileImageUploadResponse(BaseModel):
+    upload_url: str
+    object_key: str
+    required_headers: dict[str, str]
+    expires_in_seconds: int
+
+
+class ProfileImageConfirmRequest(BaseModel):
+    object_key: str

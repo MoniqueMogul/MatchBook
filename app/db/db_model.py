@@ -89,6 +89,11 @@ class User(Base):
         nullable=False,
     )
 
+    profile_image_key: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
     status: Mapped[UserStatus] = mapped_column(
         String(20),
         default=UserStatus.ACTIVE,
@@ -834,6 +839,11 @@ class Business(Base):
 
     dba: Mapped[str | None] = mapped_column(
         String(255),
+        nullable=True,
+    )
+
+    profile_image_key: Mapped[str | None] = mapped_column(
+        String(500),
         nullable=True,
     )
 

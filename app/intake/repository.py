@@ -632,3 +632,45 @@ class IntakeRepository:
                 ),
             )
         )
+
+    def update_user_profile_image(
+            self,
+            user_id: UUID,
+            object_key: str,
+    ) -> User:
+
+        user = self.get_user_by_id(user_id)
+
+        if user is None:
+            raise IntakeNotFoundError(
+                "User does not exist."
+            )
+
+        user.profile_image_key = object_key
+
+        self._commit_and_refresh(user)
+
+        return user
+
+    def update_business_profile_image(
+            self,
+            seller_user_id: UUID,
+            business_id: UUID,
+            object_key: str,
+    ) -> Business:
+
+        business = self.get_business_for_seller(
+            seller_user_id,
+            business_id,
+        )
+
+        if business is None:
+            raise IntakeNotFoundError(
+                "Business does not exist for this seller."
+            )
+
+        business.profile_image_key = object_key
+
+        self._commit_and_refresh(business)
+
+        return business
