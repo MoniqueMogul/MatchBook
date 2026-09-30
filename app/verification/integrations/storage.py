@@ -110,3 +110,25 @@ class R2DocumentStorage:
             raise
         except Exception as exc:
             raise ProviderError("Unable to retrieve R2 object") from exc
+
+    def presign_download(
+            self,
+            object_key: str,
+    ) -> tuple[str, int]:
+        try:
+            url = self._get_client().generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.bucket_name,
+                    "Key": object_key,
+                },
+                ExpiresIn=self.expires_in_seconds,
+            )
+        except ProviderConfigurationError:
+            raise
+        except Exception as exc:
+            raise ProviderError(
+                "Unable to create R2 download URL"
+            ) from exc
+
+        return url, self.expires_in_seconds

@@ -126,3 +126,8 @@ class ReadinessResponse(IntakeModel):
     completed_fields: int
     total_required_fields: int
     missing_fields: tuple[str, ...]
+
+
+class ProfileImageURLResponse(BaseModel):
+    url: str
+    expires_in_seconds: int

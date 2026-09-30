@@ -52,7 +52,7 @@ from app.intake.schemas.responses import (
     BuyerPreferencesRead,
     BuyerProfileRead,
     ReadinessResponse,
-    SellerProfileRead,
+    SellerProfileRead, ProfileImageURLResponse,
 )
 from app.intake.schemas.seller import (
     SellerProfileCreate,
@@ -320,6 +320,47 @@ def confirm_user_profile_image(
         _raise_http_error(exc)
 
     return UserPersonalRead.model_validate(user)
+
+
+@router.get(
+    "/user/profile-image",
+    response_model=ProfileImageURLResponse,
+)
+def get_user_profile_image(
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> ProfileImageURLResponse:
+
+    user = repository.get_user_by_id(
+        current_user_id
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not exist.",
+        )
+
+    if not user.profile_image_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profile image does not exist.",
+        )
+
+    storage = _get_profile_storage()
+
+    url, expires_in = storage.presign_download(
+        user.profile_image_key
+    )
+
+    return ProfileImageURLResponse(
+        url=url,
+        expires_in_seconds=expires_in,
+    )
 # ============================================================
 # BUYER PROFILE
 # ============================================================
@@ -867,6 +908,53 @@ def confirm_business_profile_image(
         _raise_http_error(exc)
 
     return BusinessRead.model_validate(business)
+
+
+
+
+@router.get(
+    "/sellers/businesses/{business_id}/profile-image",
+    response_model=ProfileImageURLResponse,
+)
+def get_business_profile_image(
+    business_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> ProfileImageURLResponse:
+
+    business = repository.get_business_for_seller(
+        current_user_id,
+        business_id,
+    )
+
+    if business is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Business does not exist for this seller.",
+        )
+
+    if not business.profile_image_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Business profile image does not exist.",
+        )
+
+    storage = _get_profile_storage()
+
+    url, expires_in = storage.presign_download(
+        business.profile_image_key
+    )
+
+    return ProfileImageURLResponse(
+        url=url,
+        expires_in_seconds=expires_in,
+    )
+
+
 
 
 @router.put(
