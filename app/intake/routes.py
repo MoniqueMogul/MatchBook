@@ -1,6 +1,6 @@
+from contextlib import contextmanager
 from typing import NoReturn
-from uuid import UUID
-
+from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
@@ -51,13 +51,16 @@ from app.intake.schemas.responses import (
 from app.intake.schemas.seller import (
     SellerProfileCreate,
 )
-from app.intake.schemas.user import UserPersonalRead, UserPhoneUpsert
+from app.intake.schemas.user import UserPersonalRead, UserPhoneUpsert, ProfileImageUploadResponse, \
+    ProfileImageUploadRequest, ProfileImageConfirmRequest
 from app.intake.service import IntakeService
 from app.intake.validation.readiness import (
     business_readiness,
     buyer_preferences_readiness,
 )
-
+from app.verification.exceptions import ProviderConfigurationError, ProviderError
+from app.verification.config import VerificationSettings
+from app.verification.integrations.storage import R2DocumentStorage
 
 router = APIRouter(
     prefix="/intake",
@@ -133,6 +136,29 @@ def _clean_idempotency_key(
 
 
 
+ALLOWED_PROFILE_IMAGE_TYPES = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+
+
+@contextmanager
+def _profile_storage_errors():
+    try:
+        yield
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _get_profile_storage() -> R2DocumentStorage:
+    return R2DocumentStorage(
+        VerificationSettings.from_env()
+    )
+
+
 # ============================================================
 # USER
 # ============================================================
@@ -195,6 +221,96 @@ def upsert_user_phone(
         user
     )
 
+
+@router.post(
+    "/user/profile-image/upload-url",
+    response_model=ProfileImageUploadResponse,
+)
+def create_user_profile_image_upload(
+    payload: ProfileImageUploadRequest,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+) -> ProfileImageUploadResponse:
+
+    extension = ALLOWED_PROFILE_IMAGE_TYPES.get(
+        payload.content_type
+    )
+
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported image type.",
+        )
+
+    object_key = (
+        f"profile-images/users/"
+        f"{current_user_id}/"
+        f"{uuid4()}.{extension}"
+    )
+
+    with _profile_storage_errors():
+        storage = _get_profile_storage()
+
+        upload_url, expires_in = storage.presign_upload(
+            object_key,
+            payload.content_type,
+        )
+
+    return ProfileImageUploadResponse(
+        upload_url=upload_url,
+        object_key=object_key,
+        required_headers={
+            "Content-Type": payload.content_type,
+        },
+        expires_in_seconds=expires_in,
+    )
+
+
+@router.put(
+    "/user/profile-image",
+    response_model=UserPersonalRead,
+)
+def confirm_user_profile_image(
+    payload: ProfileImageConfirmRequest,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> UserPersonalRead:
+
+    expected_prefix = (
+        f"profile-images/users/"
+        f"{current_user_id}/"
+    )
+
+    if not payload.object_key.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid profile image key.",
+        )
+
+    with _profile_storage_errors():
+        storage = _get_profile_storage()
+        object_exists = storage.object_exists(payload.object_key)
+
+    if not object_exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Profile image has not been uploaded.",
+        )
+
+    try:
+        user = repository.update_user_profile_image(
+            current_user_id,
+            payload.object_key,
+        )
+    except IntakeRepositoryError as exc:
+        _raise_http_error(exc)
+
+    return UserPersonalRead.model_validate(user)
 # ============================================================
 # BUYER PROFILE
 # ============================================================
@@ -566,6 +682,114 @@ def get_business(
     return BusinessRead.model_validate(
         business
     )
+
+
+@router.post(
+    "/sellers/businesses/{business_id}/profile-image/upload-url",
+    response_model=ProfileImageUploadResponse,
+)
+def create_business_profile_image_upload(
+    business_id: UUID,
+    payload: ProfileImageUploadRequest,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> ProfileImageUploadResponse:
+
+    business = repository.get_business_for_seller(
+        current_user_id,
+        business_id,
+    )
+
+    if business is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Business does not exist for this seller.",
+        )
+
+    extension = ALLOWED_PROFILE_IMAGE_TYPES.get(
+        payload.content_type
+    )
+
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported image type.",
+        )
+
+    object_key = (
+        f"profile-images/businesses/"
+        f"{business_id}/"
+        f"{uuid4()}.{extension}"
+    )
+
+    with _profile_storage_errors():
+        storage = _get_profile_storage()
+
+        upload_url, expires_in = storage.presign_upload(
+            object_key,
+            payload.content_type,
+        )
+
+    return ProfileImageUploadResponse(
+        upload_url=upload_url,
+        object_key=object_key,
+        required_headers={
+            "Content-Type": payload.content_type,
+        },
+        expires_in_seconds=expires_in,
+    )
+
+
+@router.put(
+    "/sellers/businesses/{business_id}/profile-image",
+    response_model=BusinessRead,
+)
+def confirm_business_profile_image(
+    business_id: UUID,
+    payload: ProfileImageConfirmRequest,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    repository: IntakeRepository = Depends(
+        get_intake_repository
+    ),
+) -> BusinessRead:
+
+    expected_prefix = (
+        f"profile-images/businesses/"
+        f"{business_id}/"
+    )
+
+    if not payload.object_key.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid business image key.",
+        )
+
+    with _profile_storage_errors():
+        storage = _get_profile_storage()
+        object_exists = storage.object_exists(payload.object_key)
+
+    if not object_exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Business image has not been uploaded.",
+        )
+
+    try:
+        business = repository.update_business_profile_image(
+            current_user_id,
+            business_id,
+            payload.object_key,
+        )
+    except IntakeRepositoryError as exc:
+        _raise_http_error(exc)
+
+    return BusinessRead.model_validate(business)
 
 
 @router.put(

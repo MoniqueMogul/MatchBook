@@ -85,6 +85,8 @@ class BusinessRead(IntakeModel):
     legal_name: str | None = None
     dba: str | None = None
 
+    profile_image_key: str | None = None
+
     # Business classification
     industry: Industry | None = None
     sub_industry: SubIndustry | None = None
