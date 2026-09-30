@@ -125,6 +125,7 @@ def downgrade() -> None:
         "TO anon, authenticated"
     )
 
+
     # Restore access to existing supporting database objects.
     op.execute(
         "GRANT ALL PRIVILEGES ON ALL SEQUENCES "
