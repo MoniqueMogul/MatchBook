@@ -22,7 +22,7 @@ class NDACreate(NDABase):
     """
 
     match_id: UUID
-    document_id: UUID
+    document_id: UUID | None = None
     version: str
 
 
@@ -40,7 +40,7 @@ class NDASigningSessionResponse(NDABase):
 class NDAResponse(NDABase):
     id: UUID
     match_id: UUID
-    document_id: UUID
+    document_id: UUID | None
 
     status: NDAStatus
     version: str

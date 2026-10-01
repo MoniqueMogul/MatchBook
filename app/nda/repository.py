@@ -57,6 +57,31 @@ class NDARepository:
 
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_match_for_nda_creation(
+        self,
+        *,
+        match_id: UUID,
+    ) -> Match | None:
+
+        stmt = (
+            select(Match)
+            .where(Match.id == match_id)
+            .options(
+                joinedload(Match.buyer)
+                .joinedload(BuyerProfile.user),
+
+                joinedload(Match.business)
+                .joinedload(Business.seller)
+                .joinedload(SellerProfile.user),
+            )
+        )
+
+        return (
+            self.db.execute(stmt)
+            .unique()
+            .scalar_one_or_none()
+        )
+
     def get_by_provider_document_id(
             self,
             *,
@@ -139,7 +164,7 @@ class NDARepository:
         self,
         *,
         match_id: UUID,
-        document_id: UUID,
+        document_id: UUID | None = None,
         version: str,
     ) -> NDA:
 

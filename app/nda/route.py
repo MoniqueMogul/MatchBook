@@ -35,12 +35,50 @@ from app.nda.service import (
 from app.nda.signing.exceptions import (
     SignatureProviderError,
 )
+from app.verification.exceptions import NDAEligibilityError
 
 
 router = APIRouter(
     prefix="/nda",
     tags=["NDA"],
 )
+
+
+@router.post(
+    "/matches/{match_id}",
+    response_model=NDAAccessResponse,
+)
+def initialize_nda_for_match(
+    match_id: UUID,
+    db: Session = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+) -> NDAAccessResponse:
+
+    service = NDAService(db=db)
+
+    try:
+        return service.initialize_for_match(
+            match_id=match_id,
+            current_user_id=current_user_id,
+        )
+
+    except NDANotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    except NDAAccessDeniedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    except NDAEligibilityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post(
@@ -81,6 +119,12 @@ async def create_nda_signing_session(
     except NDAAccessDeniedError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    except NDAEligibilityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
