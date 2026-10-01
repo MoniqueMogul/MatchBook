@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.db_enum import NDAStatus, EventType
-from app.db.db_model import NDA
+from app.db.db_model import Match, NDA
 
 from app.events.repository import OutboxRepository
 from app.events.schema import OutboxEventCreate
@@ -28,6 +29,8 @@ from app.verification.services.nda_eligibility import NDAEligibilityService
 import logging
 
 log = logging.getLogger("matchbook.nda")
+
+NDA_TEMPLATE_VERSION = "v1"
 
 # ============================================================
 # EXCEPTIONS
@@ -101,6 +104,69 @@ class NDAService:
         )
 
         self.signature_provider = signature_provider
+
+    # ========================================================
+    # INITIALIZE NDA
+    # ========================================================
+
+    def initialize_for_match(
+            self,
+            *,
+            match_id: UUID,
+            current_user_id: UUID,
+    ) -> NDAAccessResponse:
+        """Create or return the NDA for an eligible match."""
+
+        existing = self.repository.get_by_match_id(
+            match_id=match_id,
+            for_update=False,
+        )
+
+        if existing is not None:
+            return self.get_nda_access(
+                match_id=match_id,
+                current_user_id=current_user_id,
+            )
+
+        match = self.repository.get_match_for_nda_creation(
+            match_id=match_id,
+        )
+
+        if match is None:
+            raise NDANotFoundError(
+                f"Match {match_id} was not found."
+            )
+
+        self._get_match_signer_role(
+            match=match,
+            current_user_id=current_user_id,
+        )
+
+        self.verification_service.require_nda_eligibility(
+            match_id=match_id,
+        )
+
+        try:
+            self.repository.create(
+                match_id=match_id,
+                version=NDA_TEMPLATE_VERSION,
+            )
+            self.db.commit()
+        except IntegrityError:
+            # The match_id uniqueness constraint makes concurrent
+            # initialization requests safely idempotent.
+            self.db.rollback()
+
+            if self.repository.get_by_match_id(
+                    match_id=match_id,
+                    for_update=False,
+            ) is None:
+                raise
+
+        return self.get_nda_access(
+            match_id=match_id,
+            current_user_id=current_user_id,
+        )
 
     # ========================================================
     # SIGN NDA
@@ -223,7 +289,17 @@ class NDAService:
             current_user_id: UUID,
     ) -> SignerRole:
 
-        match = nda.match
+        return NDAService._get_match_signer_role(
+            match=nda.match,
+            current_user_id=current_user_id,
+        )
+
+    @staticmethod
+    def _get_match_signer_role(
+            *,
+            match: Match,
+            current_user_id: UUID,
+    ) -> SignerRole:
 
         if current_user_id == match.buyer.user_id:
             return SignerRole.BUYER

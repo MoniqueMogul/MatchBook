@@ -1797,11 +1797,13 @@ class NDA(Base):
         index=True,
     )
 
-    document_id: Mapped[UUID] = mapped_column(
+    # Legacy optional link to an R2 document. Electronic NDA documents are
+    # created and owned by the configured signature provider instead.
+    document_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("documents.id", ondelete="RESTRICT"),
         unique=True,
-        nullable=False,
+        nullable=True,
         index=True,
     )
 
@@ -1882,7 +1884,7 @@ class NDA(Base):
         back_populates="nda",
     )
 
-    document: Mapped["Document"] = relationship(
+    document: Mapped["Document | None"] = relationship(
         back_populates="nda",
         uselist=False,
     )
