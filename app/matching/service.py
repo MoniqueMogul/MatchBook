@@ -39,13 +39,9 @@ def build_buyer_match_input(
     return BuyerMatchInput(
         buyer_id=preferences.buyer_id,
 
-        target_industries=[
-            item["industry"]
-            for item in (
-                preferences.target_industry_preferences or []
-            )
-            if isinstance(item, dict) and item.get("industry")
-        ] or None,
+        target_industry_preferences=(
+            preferences.target_industry_preferences
+        ),
         target_locations=preferences.target_locations,
         maximum_purchase_price=(
             preferences.maximum_purchase_price
