@@ -86,6 +86,7 @@ def build_business_match_input(
         business_id=business.id,
 
         industry=business.industry,
+        sub_industry=business.sub_industry,
         state=business.state,
         city=business.city,
         county=business.county,
