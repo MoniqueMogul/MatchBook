@@ -55,6 +55,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "https://matchbookmarket.store",
         "https://www.matchbookmarket.store",
+        "https://match-book-front-axd6in6yp-moniquemoguls-projects.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
