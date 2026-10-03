@@ -26,6 +26,7 @@ from app.db.db_model import (
 from app.events.payload_schema import MessageCreatedPayload
 from app.events.repository import OutboxRepository
 from app.events.schema import OutboxEventCreate
+from app.verification.business_images import business_image_url
 
 
 class ChatServiceError(Exception):
@@ -92,6 +93,9 @@ class ChatService:
 
                     business=ConversationBusinessResponse(
                         id=business.id,
+                        profile_image_url=business_image_url(
+                            business.id, business.profile_image_key,
+                        ),
                         legal_name=business.legal_name,
                         dba=business.dba,
                         industry=business.industry,

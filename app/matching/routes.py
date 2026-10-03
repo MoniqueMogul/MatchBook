@@ -12,6 +12,7 @@ from app.matching.api_schema import (
     MatchResponse, BusinessMatchSummary,
 )
 from app.matching.repository import MatchingRepository
+from app.verification.business_images import business_image_url
 
 
 router = APIRouter(
@@ -63,10 +64,13 @@ def get_my_matches(
 
     has_more = len(rows) > limit
 
-    matches = [
-        MatchResponse.model_validate(match)
-        for match in rows[:limit]
-    ]
+    matches = []
+    for match in rows[:limit]:
+        response = MatchResponse.model_validate(match)
+        response.business.profile_image_url = business_image_url(
+            match.business.id, match.business.profile_image_key,
+        )
+        matches.append(response)
 
     return BuyerMatchesResponse(
         buyer_id=buyer.id,
@@ -127,13 +131,18 @@ def get_match_detail(
         for dimension, data in (match.score_breakdown or {}).items()
     ]
 
+    business = BusinessMatchSummary.model_validate(match.business)
+    business.profile_image_url = business_image_url(
+        match.business.id, match.business.profile_image_key,
+    )
+
     return MatchDetailResponse(
         id=match.id,
         buyer_id=match.buyer_id,
         score=match.score,
         status=match.status,
         matching_version=match.matching_version,
-        business=BusinessMatchSummary.model_validate(match.business),
+        business=business,
         dimensions=dimensions,
         created_at=match.created_at,
         updated_at=match.updated_at,

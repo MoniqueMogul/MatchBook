@@ -32,6 +32,7 @@ class ConversationParticipantResponse(BaseModel):
 
 class ConversationBusinessResponse(BaseModel):
     id: UUID
+    profile_image_url: str | None = None
     legal_name: str | None
     dba: str | None
     industry: str

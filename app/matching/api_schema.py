@@ -37,6 +37,7 @@ class BusinessMatchSummary(MatchingAPIModel):
     arr: Decimal | None
 
     years_in_operation: int | None
+    profile_image_url: str | None = None
 
 
 class MatchResponse(MatchingAPIModel):
