@@ -12,7 +12,7 @@ from app.chat.repository import (
 )
 from app.chat.schema import MessageCreate, LatestMessageResponse, ConversationResponse, ConversationParticipantResponse, \
     ConversationBusinessResponse
-from app.db.db_enum import EventType
+from app.db.db_enum import EventType, NDAStatus
 from app.db.db_model import (
     Business,
     BuyerProfile,
@@ -21,12 +21,14 @@ from app.db.db_model import (
     Message,
     SellerProfile,
     OutboxEvent,
+    NDA,
 )
 
 from app.events.payload_schema import MessageCreatedPayload
 from app.events.repository import OutboxRepository
 from app.events.schema import OutboxEventCreate
 from app.verification.business_images import business_image_url
+from app.verification.services.nda_eligibility import NDAEligibilityService
 
 
 class ChatServiceError(Exception):
@@ -63,6 +65,14 @@ class ChatService:
         for conversation, latest_message, unread_count in rows:
             match = conversation.match
             business = match.business
+            nda = self._completed_nda(match.id)
+            seller_inbox_eligible = (
+                business.seller.user_id == user_id
+                and match.buyer.user_id != user_id
+                and self._seller_can_reply(conversation, nda)
+            )
+            if match.buyer.user_id != user_id and not seller_inbox_eligible:
+                continue
 
             # The participant is always the OTHER person.
             if match.buyer.user_id == user_id:
@@ -84,6 +94,8 @@ class ChatService:
                 ConversationResponse(
                     id=conversation.id,
                     match_id=conversation.match_id,
+                    nda_completed=nda is not None,
+                    seller_inbox_eligible=seller_inbox_eligible,
 
                     participant=ConversationParticipantResponse(
                         user_id=participant.id,
@@ -142,6 +154,7 @@ class ChatService:
         )
 
         match = conversation.match
+        self._require_verified_nda(match.id)
 
         message = self.repository.create_message(
             conversation_id=conversation_id,
@@ -155,6 +168,7 @@ class ChatService:
         )
 
         payload = MessageCreatedPayload(
+            message_id=message.id,
             recipient_user_id=recipient_user_id,
             conversation_id=conversation.id,
         )
@@ -206,10 +220,10 @@ class ChatService:
         match_id: UUID,
         user_id: UUID,
     ) -> Conversation:
-        self._require_match_access(
-            match_id=match_id,
-            user_id=user_id,
-        )
+        match = self._require_match_access(match_id=match_id, user_id=user_id)
+        if match.buyer.user_id != user_id:
+            raise ChatAccessDeniedError("Only the matched buyer can start a conversation.")
+        self._require_verified_nda(match.id)
 
         existing = self.repository.get_conversation_by_match(
             match_id=match_id,
@@ -237,7 +251,35 @@ class ChatService:
             user_id=user_id,
         )
 
+        if conversation.match.buyer.user_id != user_id and not self._seller_can_reply(
+            conversation, self._completed_nda(conversation.match_id),
+        ):
+            raise ChatAccessDeniedError("This conversation is not available.")
         return conversation
+
+    def _completed_nda(self, match_id: UUID) -> NDA | None:
+        return self.session.scalar(select(NDA).where(
+            NDA.match_id == match_id,
+            NDA.status == NDAStatus.COMPLETED,
+            NDA.buyer_signed_at.is_not(None),
+            NDA.seller_signed_at.is_not(None),
+            NDA.completed_at.is_not(None),
+        ))
+
+    def _require_verified_nda(self, match_id: UUID) -> None:
+        if self._completed_nda(match_id) is None or not NDAEligibilityService(self.session).get_nda_eligibility(match_id).eligible:
+            raise ChatAccessDeniedError("Complete verification and the NDA before messaging.")
+
+    def _seller_can_reply(self, conversation: Conversation, nda: NDA | None) -> bool:
+        if nda is None:
+            return False
+        # Only an inbound buyer message sent after NDA completion opens the inbox.
+        inbound = self.session.scalar(select(Message.id).where(
+            Message.conversation_id == conversation.id,
+            Message.sender_id == conversation.match.buyer.user_id,
+            Message.created_at >= nda.completed_at,
+        ).limit(1))
+        return inbound is not None and NDAEligibilityService(self.session).get_nda_eligibility(conversation.match_id).eligible
 
     def _require_match_access(
         self,

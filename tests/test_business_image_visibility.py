@@ -1,6 +1,7 @@
 """Photo visibility through real match/chat queries; no external services."""
 import sys
 from decimal import Decimal
+from datetime import datetime, timezone, timedelta
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -20,7 +21,7 @@ sys.modules.setdefault('app.auth.auth', auth_stub)
 
 from app.auth.dependencies import get_current_user_id
 from app.db.database import get_db
-from app.db.db_model import User, SellerProfile, Business, BuyerProfile, Match, Conversation, Message
+from app.db.db_model import User, SellerProfile, Business, BuyerProfile, Match, Conversation, Message, NDA, OutboxEvent
 from app.db.db_enum import BusinessType, Industry, SubIndustry, BusinessModel, BusinessStatus
 from app.matching import routes
 from app.chat.service import ChatService
@@ -36,7 +37,7 @@ def sqlite_jsonb(element, compiler, **kwargs):
 @pytest.fixture
 def flow():
     engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
-    for model in (User, SellerProfile, Business, BuyerProfile, Match, Conversation, Message):
+    for model in (User, SellerProfile, Business, BuyerProfile, Match, Conversation, Message, NDA, OutboxEvent):
         model.__table__.create(engine)
     with Session(engine) as session:
         owner, buyer_user, other_user = [User(id=uuid4(), first_name='Private', last_name='Person') for _ in range(3)]
@@ -51,12 +52,16 @@ def flow():
         match = Match(id=uuid4(), buyer=buyer, business=business, score=Decimal('0.9'), matching_version='test')
         conversation = Conversation(id=uuid4(), match=match)
         session.add_all([owner, buyer_user, other_user, seller, buyer, other, business, match, conversation])
+        completed = datetime.now(timezone.utc) - timedelta(minutes=5)
+        session.add(NDA(match=match, status="completed", version="test", buyer_signed_at=completed, seller_signed_at=completed, completed_at=completed))
+        session.add(Message(conversation=conversation, sender_id=buyer_user.id, content="Hello", created_at=completed + timedelta(minutes=1)))
         session.commit()
         app = FastAPI()
         app.include_router(routes.router)
         app.dependency_overrides[get_current_user_id] = lambda: buyer_user.id
         app.dependency_overrides[get_db] = lambda: session
-        with patch.object(business_images, 'R2DocumentStorage') as factory:
+        with patch.object(business_images, 'R2DocumentStorage') as factory, patch('app.chat.service.NDAEligibilityService') as eligibility:
+            eligibility.return_value.get_nda_eligibility.return_value.eligible = True
             factory.return_value.presign_download.return_value = ('https://images.example/business?signature=test', 900)
             with TestClient(app) as client:
                 yield app, client, session, buyer_user, other_user, owner, business, match, factory

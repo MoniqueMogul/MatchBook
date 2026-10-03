@@ -48,6 +48,8 @@ class LatestMessageResponse(BaseModel):
 
 
 class ConversationResponse(BaseModel):
+    nda_completed: bool = False
+    seller_inbox_eligible: bool = False
     id: UUID
     match_id: UUID
 

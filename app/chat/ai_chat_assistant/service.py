@@ -16,6 +16,7 @@ from app.chat.ai_chat_assistant.schema import (
     AIMatchDimension, AIIntroductionResponse, AIIntroductionRequest,
 )
 from app.core.redis import redis_client
+from app.chat.service import ChatService, ChatAccessDeniedError
 
 from app.db.db_model import (
     Business,
@@ -83,6 +84,14 @@ class AIAssistedChatService:
             match=match,
             user_id=user_id,
         )
+
+        if match.buyer.user_id != user_id:
+            try:
+                ChatService(self.session)._require_conversation_access(
+                    conversation_id=conversation_id, user_id=user_id,
+                )
+            except ChatAccessDeniedError as exc:
+                raise PermissionError("This conversation is not available.") from exc
 
         sender_role = self._get_sender_role(
             buyer=buyer,
