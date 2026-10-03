@@ -34,6 +34,8 @@ class TargetLocation(IntakeModel):
         max_length=150,
     )
 
+    zip_code: str | None = Field(default=None, max_length=20)
+
     county: str | None = Field(
         default=None,
         max_length=150,
@@ -48,6 +50,7 @@ class TargetLocation(IntakeModel):
         "state",
         "city",
         "county",
+        "zip_code",
         "country_code",
     )
     @classmethod
@@ -69,6 +72,7 @@ class TargetLocation(IntakeModel):
                 self.state,
                 self.city,
                 self.county,
+                self.zip_code,
                 self.country_code,
             )
         )
@@ -107,6 +111,8 @@ class LocationAutocompleteResult(IntakeModel):
         max_length=150,
     )
 
+    zip_code: str | None = Field(default=None, max_length=20)
+
     county: str | None = Field(
         default=None,
         max_length=150,
@@ -130,6 +136,7 @@ class LocationAutocompleteResult(IntakeModel):
     @field_validator(
         "city",
         "county",
+        "zip_code",
         "state",
         "country",
         mode="before",

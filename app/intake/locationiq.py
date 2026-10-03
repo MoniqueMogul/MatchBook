@@ -88,6 +88,7 @@ def autocomplete_locations(
                 longitude=row.get("lon"),
                 city=city,
                 county=address.get("county"),
+                zip_code=address.get("postcode"),
                 state=address.get("state"),
                 country=address.get("country"),
                 country_code=address.get("country_code"),

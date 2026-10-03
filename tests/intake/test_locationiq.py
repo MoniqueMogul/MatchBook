@@ -48,7 +48,7 @@ def test_normalizes_response_and_request(monkeypatch):
         "display_name": "Calgary, Alberta, Canada",
         "latitude": 51.05, "longitude": -114.07, "city": "Calgary",
         "county": "Calgary Region", "state": "Alberta", "country": "Canada",
-        "country_code": "CA",
+        "country_code": "CA", "zip_code": None,
     }]
 
 
@@ -92,3 +92,23 @@ def test_city_fallback(monkeypatch, field):
     row["address"] = {field: "Calgary"}
     monkeypatch.setattr(locationiq, "urlopen", lambda *a, **k: io.BytesIO(json.dumps([row]).encode()))
     assert locationiq.autocomplete_locations("Calgary")[0].city == "Calgary"
+
+
+def test_postal_code_is_preserved_for_buyer_and_business(monkeypatch):
+    from app.intake.schemas.common import TargetLocation
+    from app.intake.schemas.business import BusinessCreate
+    from app.db.db_enum import BusinessType, BusinessModel, Industry
+    from app.db.industry_mapping import INDUSTRY_SUB_INDUSTRIES
+    row = provider_row()
+    row["address"]["postcode"] = "T2P 1J9"
+    monkeypatch.setattr(locationiq, "urlopen", lambda *a, **k: io.BytesIO(json.dumps([row]).encode()))
+    result = locationiq.autocomplete_locations("Calgary")[0]
+    fields = {key: getattr(result, key) for key in ("city", "state", "county", "zip_code")}
+    preference = TargetLocation(**fields)
+    industry = next(iter(Industry))
+    business = BusinessCreate(**fields, business_type=next(iter(BusinessType)),
+        business_model=next(iter(BusinessModel)), industry=industry,
+        sub_industry=next(iter(INDUSTRY_SUB_INDUSTRIES[industry])))
+    assert preference.zip_code == business.zip_code == "T2P 1J9"
+    for key in fields:
+        assert getattr(preference, key) == getattr(business, key)
