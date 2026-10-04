@@ -123,14 +123,7 @@ class IntakeRepository:
             data: UserPhoneUpsert,
     ) -> User:
 
-        user = self.get_user_by_id(
-            user_id
-        )
-
-        if user is None:
-            raise IntakeNotFoundError(
-                "User does not exist."
-            )
+        user = self._require_user(user_id)
 
         existing_user = self.session.scalar(
             select(User).where(
@@ -146,9 +139,7 @@ class IntakeRepository:
 
         user.phone = data.phone
 
-        self._commit_and_refresh(
-            user
-        )
+        self._commit_and_refresh(user)
 
         return user
 
