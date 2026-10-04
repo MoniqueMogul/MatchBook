@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
@@ -50,12 +50,30 @@ class IntakeService:
             session
         )
 
+    # ========================================================
+    # BUSINESS MATCHING EVENTS
+    # ========================================================
 
     def _create_business_event_if_ready(
         self,
         business: Business,
         seller_user_id: UUID,
     ) -> OutboxEvent | None:
+        """
+        Stage the correct matching event for a matching-ready business.
+
+        First time the business becomes matching-ready:
+            BUSINESS_CREATED
+
+        Every later matching-relevant update:
+            BUSINESS_UPDATED
+
+        The stable BUSINESS_CREATED idempotency key ensures the
+        creation event can only exist once.
+
+        BUSINESS_UPDATED events receive unique idempotency keys so
+        every legitimate update can trigger a fresh matching run.
+        """
 
         validated_business = (
             BusinessCreate.model_validate(
@@ -76,12 +94,37 @@ class IntakeService:
             seller_user_id=seller_user_id,
         )
 
+        created_idempotency_key = (
+            f"business_created:{business.id}"
+        )
+
+        existing_created_event = (
+            self.outbox_repository.get_by_idempotency_key(
+                created_idempotency_key
+            )
+        )
+
+        if existing_created_event is None:
+            return self.outbox_repository.create_event(
+                OutboxEventCreate(
+                    idempotency_key=created_idempotency_key,
+                    event_type=EventType.BUSINESS_CREATED,
+                    entity_type="business",
+                    entity_id=business.id,
+                    payload=payload.model_dump(
+                        mode="json"
+                    ),
+                )
+            )
+
         return self.outbox_repository.create_event(
             OutboxEventCreate(
                 idempotency_key=(
-                    f"business_created:{business.id}"
+                    f"business_updated:"
+                    f"{business.id}:"
+                    f"{uuid4()}"
                 ),
-                event_type=EventType.BUSINESS_CREATED,
+                event_type=EventType.BUSINESS_UPDATED,
                 entity_type="business",
                 entity_id=business.id,
                 payload=payload.model_dump(
@@ -91,10 +134,10 @@ class IntakeService:
         )
 
     def create_business(
-            self,
-            seller_user_id: UUID,
-            data: BusinessCreate,
-            idempotency_key: str,
+        self,
+        seller_user_id: UUID,
+        data: BusinessCreate,
+        idempotency_key: str,
     ) -> Business:
 
         try:
@@ -134,10 +177,10 @@ class IntakeService:
         return business
 
     def update_business(
-            self,
-            seller_user_id: UUID,
-            business_id: UUID,
-            data: BusinessUpdate,
+        self,
+        seller_user_id: UUID,
+        business_id: UUID,
+        data: BusinessUpdate,
     ) -> Business:
 
         try:
@@ -171,9 +214,13 @@ class IntakeService:
 
         return business
 
+    # ========================================================
+    # OUTBOX ENQUEUE
+    # ========================================================
+
     @staticmethod
     def _enqueue_outbox_event(
-            event_id: UUID,
+        event_id: UUID,
     ) -> None:
 
         from app.events.tasks import send_outbox_event
@@ -182,12 +229,31 @@ class IntakeService:
             str(event_id)
         )
 
+    # ========================================================
+    # BUYER MATCHING EVENTS
+    # ========================================================
 
     def _create_buyer_event_if_ready(
         self,
         preferences: BuyerPreferences,
         profile: BuyerProfile,
     ) -> OutboxEvent | None:
+        """
+        Stage the correct matching event for a matching-ready buyer.
+
+        First time the buyer becomes matching-ready:
+            BUYER_CREATED
+
+        Every later matching-preference update:
+            BUYER_PREFERENCES_UPDATED
+
+        The stable BUYER_CREATED idempotency key ensures the creation
+        event can only exist once.
+
+        BUYER_PREFERENCES_UPDATED events receive unique idempotency
+        keys so every legitimate preference update can trigger a
+        fresh matching run.
+        """
 
         validated = (
             BuyerPreferencesUpsert.model_validate(
@@ -207,12 +273,37 @@ class IntakeService:
             user_id=profile.user_id,
         )
 
+        created_idempotency_key = (
+            f"buyer_created:{profile.id}"
+        )
+
+        existing_created_event = (
+            self.outbox_repository.get_by_idempotency_key(
+                created_idempotency_key
+            )
+        )
+
+        if existing_created_event is None:
+            return self.outbox_repository.create_event(
+                OutboxEventCreate(
+                    idempotency_key=created_idempotency_key,
+                    event_type=EventType.BUYER_CREATED,
+                    entity_type="buyer",
+                    entity_id=profile.id,
+                    payload=payload.model_dump(
+                        mode="json"
+                    ),
+                )
+            )
+
         return self.outbox_repository.create_event(
             OutboxEventCreate(
                 idempotency_key=(
-                    f"buyer_created:{profile.id}"
+                    f"buyer_preferences_updated:"
+                    f"{profile.id}:"
+                    f"{uuid4()}"
                 ),
-                event_type=EventType.BUYER_CREATED,
+                event_type=EventType.BUYER_PREFERENCES_UPDATED,
                 entity_type="buyer",
                 entity_id=profile.id,
                 payload=payload.model_dump(
@@ -220,6 +311,10 @@ class IntakeService:
                 ),
             )
         )
+
+    # ========================================================
+    # BUYER PROFILE
+    # ========================================================
 
     def upsert_buyer_profile(
         self,
@@ -247,6 +342,9 @@ class IntakeService:
 
         return profile
 
+    # ========================================================
+    # BUYER PREFERENCES
+    # ========================================================
 
     def upsert_buyer_preferences(
         self,
