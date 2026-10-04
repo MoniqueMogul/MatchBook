@@ -52,6 +52,8 @@ class IntakeNotFoundError(IntakeRepositoryError):
 class IntakeConflictError(IntakeRepositoryError):
     """Raised when persisted state conflicts with an Intake write."""
 
+class PhoneAlreadyInUseError(IntakeConflictError):
+    """Raised when a phone number belongs to another user."""
 
 
 @dataclass(frozen=True)
@@ -114,17 +116,6 @@ class IntakeRepository:
     # USER
     # ========================================================
 
-    def get_user_by_id(
-            self,
-            user_id: UUID,
-    ) -> User | None:
-
-        return self.session.scalar(
-            select(User).where(
-                User.id == user_id
-            )
-        )
-
     def upsert_user_phone(
             self,
             *,
@@ -139,6 +130,18 @@ class IntakeRepository:
         if user is None:
             raise IntakeNotFoundError(
                 "User does not exist."
+            )
+
+        existing_user = self.session.scalar(
+            select(User).where(
+                User.phone == data.phone,
+                User.id != user_id,
+            )
+        )
+
+        if existing_user is not None:
+            raise PhoneAlreadyInUseError(
+                "This phone number is already associated with another account."
             )
 
         user.phone = data.phone
