@@ -186,15 +186,15 @@ def get_current_user(
     ),
 ) -> UserPersonalRead:
 
-    user = repository.get_user_by_id(
-        current_user_id
-    )
-
-    if user is None:
+    try:
+        user = repository._require_user(
+            current_user_id
+        )
+    except IntakeNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User does not exist.",
-        )
+        ) from exc
 
     return UserPersonalRead.model_validate(
         user
@@ -335,7 +335,7 @@ def get_user_profile_image(
     ),
 ) -> ProfileImageURLResponse:
 
-    user = repository.get_user_by_id(
+    user = repository._require_user(
         current_user_id
     )
 
