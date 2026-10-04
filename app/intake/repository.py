@@ -633,7 +633,7 @@ class IntakeRepository:
             object_key: str,
     ) -> User:
 
-        user = self.get_user_by_id(user_id)
+        user = self._require_user(user_id)
 
         if user is None:
             raise IntakeNotFoundError(
