@@ -2,7 +2,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
-from app.db.db_enum import EventType
+from app.db.db_enum import BusinessStatus, EventType
 from app.db.db_model import (
     Business,
     BuyerPreferences,
@@ -15,7 +15,11 @@ from app.events.payload_schema import (
 )
 from app.events.repository import OutboxRepository
 from app.events.schema import OutboxEventCreate
-from app.intake.repository import IntakeRepository
+from app.intake.repository import (
+    IntakeConflictError,
+    IntakeNotFoundError,
+    IntakeRepository,
+)
 from app.intake.schemas.business import (
     BusinessCreate,
     BusinessUpdate,
@@ -85,7 +89,10 @@ class IntakeService:
             validated_business
         )
 
-        if not readiness.ready:
+        if (
+            not readiness.ready
+            or business.status != BusinessStatus.ACTIVE
+        ):
             return None
 
         payload = BusinessCreatedPayload(
@@ -152,13 +159,8 @@ class IntakeService:
             if not result.created:
                 return business
 
-            outbox_event = (
-                self._create_business_event_if_ready(
-                    business,
-                    seller_user_id,
-                )
-            )
-
+            # New businesses remain drafts. Creating or saving a
+            # complete draft must not make it eligible for matching.
             self.session.commit()
 
         except Exception:
@@ -168,11 +170,6 @@ class IntakeService:
         self.session.refresh(
             business
         )
-
-        if outbox_event is not None:
-            self._enqueue_outbox_event(
-                outbox_event.id
-            )
 
         return business
 
@@ -211,6 +208,148 @@ class IntakeService:
             self._enqueue_outbox_event(
                 outbox_event.id
             )
+
+        return business
+
+    def list_business(
+        self,
+        seller_user_id: UUID,
+        business_id: UUID,
+    ) -> Business:
+        """
+        Publish a seller-owned business to the marketplace.
+
+        A business may only be listed when all fields required by
+        business_readiness are complete. Listing changes the lifecycle
+        state to ACTIVE and stages a matching event in the same
+        transaction.
+        """
+
+        try:
+            business = self.repository.get_business_for_seller(
+                seller_user_id,
+                business_id,
+            )
+
+            if business is None:
+                raise IntakeNotFoundError(
+                    "Business does not exist for this seller."
+                )
+
+            if business.status == BusinessStatus.ACTIVE:
+                return business
+
+            if business.status in {
+                BusinessStatus.SOLD,
+                BusinessStatus.WITHDRAWN,
+            }:
+                raise IntakeConflictError(
+                    "This business cannot be listed from its current status."
+                )
+
+            validated_business = BusinessCreate.model_validate(
+                business
+            )
+
+            readiness = business_readiness(
+                validated_business
+            )
+
+            if not readiness.ready:
+                missing = ", ".join(
+                    readiness.missing_fields
+                )
+
+                detail = (
+                    "Business is not ready to be listed."
+                )
+
+                if missing:
+                    detail = (
+                        f"{detail} Missing required fields: "
+                        f"{missing}."
+                    )
+
+                raise IntakeConflictError(
+                    detail
+                )
+
+            business.status = BusinessStatus.ACTIVE
+
+            self.session.flush()
+
+            outbox_event = (
+                self._create_business_event_if_ready(
+                    business,
+                    seller_user_id,
+                )
+            )
+
+            if outbox_event is None:
+                raise IntakeConflictError(
+                    "Business could not be queued for matching."
+                )
+
+            self.session.commit()
+
+        except Exception:
+            self.session.rollback()
+            raise
+
+        self.session.refresh(
+            business
+        )
+
+        self._enqueue_outbox_event(
+            outbox_event.id
+        )
+
+        return business
+
+    def unlist_business(
+        self,
+        seller_user_id: UUID,
+        business_id: UUID,
+    ) -> Business:
+        """
+        Remove a seller-owned business from marketplace discovery.
+
+        Unlisting returns an ACTIVE business to DRAFT. Because matching
+        candidate queries only include ACTIVE businesses, the listing
+        immediately stops participating in future matching runs.
+        """
+
+        try:
+            business = self.repository.get_business_for_seller(
+                seller_user_id,
+                business_id,
+            )
+
+            if business is None:
+                raise IntakeNotFoundError(
+                    "Business does not exist for this seller."
+                )
+
+            if business.status == BusinessStatus.DRAFT:
+                return business
+
+            if business.status != BusinessStatus.ACTIVE:
+                raise IntakeConflictError(
+                    "Only an active business can be unlisted."
+                )
+
+            business.status = BusinessStatus.DRAFT
+
+            self.session.flush()
+            self.session.commit()
+
+        except Exception:
+            self.session.rollback()
+            raise
+
+        self.session.refresh(
+            business
+        )
 
         return business
 
