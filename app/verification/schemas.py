@@ -5,35 +5,34 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.db_enum import DocumentType, VerificationStatus
 
 
 class DocumentUploadRequest(BaseModel):
+    """
+    Public request for uploading a verification document.
+
+    Ownership is resolved by the endpoint and authenticated user rather
+    than by accepting internal financial-record IDs from the client.
+
+    Buyer endpoint:
+        authenticated user -> BuyerProfile -> BuyerFinancials
+
+    Business endpoint:
+        authenticated user + business_id
+        -> owned Business -> BusinessFinancials
+    """
+
     expected_document_type: DocumentType
-    original_filename: str = Field(min_length=1, max_length=255)
+    original_filename: str = Field(
+        min_length=1,
+        max_length=255,
+    )
     mime_type: str
     file_size: int = Field(gt=0)
-    buyer_financials_id: UUID | None = None
-    business_financials_id: UUID | None = None
     declaration_signed: bool = False
-
-    @model_validator(mode="after")
-    def validate_owner(self) -> "DocumentUploadRequest":
-        owner_count = sum(
-            value is not None
-            for value in (
-                self.buyer_financials_id,
-                self.business_financials_id,
-            )
-        )
-        if owner_count != 1:
-            raise ValueError(
-                "Exactly one of buyer_financials_id or "
-                "business_financials_id is required"
-            )
-        return self
 
 
 class DocumentUploadResponse(BaseModel):
@@ -62,7 +61,10 @@ class DetectedDocumentClassification(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     detected_type: DocumentType
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
 
 
 class DocumentDecision(BaseModel):
@@ -78,12 +80,19 @@ class DocumentGateAssessment(BaseModel):
     readable_text_extracted: bool
     business_identity_match: bool | None
     reporting_period_identified: bool | None
-    reporting_years: list[int] = Field(default_factory=list)
-    review_reasons: list[str] = Field(default_factory=list)
+    reporting_years: list[int] = Field(
+        default_factory=list
+    )
+    review_reasons: list[str] = Field(
+        default_factory=list
+    )
 
 
 class PlaidPublicTokenRequest(BaseModel):
-    public_token: str = Field(min_length=1, max_length=2048)
+    public_token: str = Field(
+        min_length=1,
+        max_length=2048,
+    )
 
 
 class PlaidLinkTokenResponse(BaseModel):
@@ -118,16 +127,25 @@ class VerificationStatusResponse(BaseModel):
 
 class NDAIneligibilityReason(str, Enum):
     BUYER_KYC = "buyer_kyc"
-    BUYER_FINANCIAL_VERIFICATION = "buyer_financial_verification"
+    BUYER_FINANCIAL_VERIFICATION = (
+        "buyer_financial_verification"
+    )
     SELLER_KYC = "seller_kyc"
     BUSINESS_KYB = "business_kyb"
-    BUSINESS_FINANCIAL_VERIFICATION = "business_financial_verification"
+    BUSINESS_FINANCIAL_VERIFICATION = (
+        "business_financial_verification"
+    )
 
 
 class NDAEligibilityResult(BaseModel):
     eligible: bool
-    missing: list[NDAIneligibilityReason] = Field(default_factory=list)
+    missing: list[NDAIneligibilityReason] = Field(
+        default_factory=list
+    )
 
+class DocumentDownloadResponse(BaseModel):
+    download_url: str
+    expires_in_seconds: int
 
 class DiditResult(BaseModel):
     session_id: str

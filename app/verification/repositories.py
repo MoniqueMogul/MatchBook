@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.db_enum import EventType, VerificationStatus
@@ -30,13 +31,20 @@ class VerificationRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def require_match_verification_context(self, match_id: UUID) -> Match:
+    def require_match_verification_context(
+        self,
+        match_id: UUID,
+    ) -> Match:
         """Load every authoritative record used by the NDA eligibility gate."""
         statement = (
             select(Match)
             .options(
-                joinedload(Match.buyer).joinedload(BuyerProfile.user),
-                joinedload(Match.buyer).joinedload(BuyerProfile.financials),
+                joinedload(Match.buyer).joinedload(
+                    BuyerProfile.user
+                ),
+                joinedload(Match.buyer).joinedload(
+                    BuyerProfile.financials
+                ),
                 joinedload(Match.business)
                 .joinedload(Business.seller)
                 .joinedload(SellerProfile.user),
@@ -46,27 +54,171 @@ class VerificationRepository:
             )
             .where(Match.id == match_id)
         )
-        match = self.session.execute(statement).unique().scalar_one_or_none()
+
+        match = (
+            self.session.execute(statement)
+            .unique()
+            .scalar_one_or_none()
+        )
+
         if match is None:
-            raise ResourceNotFoundError("Match not found")
+            raise ResourceNotFoundError(
+                "Match not found"
+            )
+
         return match
+
+    # ============================================================
+    # BUYER
+    # ============================================================
+
+    def require_buyer_profile(
+        self,
+        user_id: UUID,
+    ) -> BuyerProfile:
+        """
+        Resolve the authenticated user's buyer profile.
+
+        Authentication/identity resolution is kept separate from
+        BuyerFinancials persistence.
+        """
+        profile = self.session.scalar(
+            select(BuyerProfile).where(
+                BuyerProfile.user_id == user_id
+            )
+        )
+
+        if profile is None:
+            raise ResourceNotFoundError(
+                "Buyer profile not found"
+            )
+
+        return profile
 
     def require_owned_buyer_financials(
         self,
         financials_id: UUID,
         user_id: UUID,
     ) -> BuyerFinancials:
+        """
+        Resolve a BuyerFinancials record by ID while verifying
+        that it belongs to the authenticated user.
+
+        Kept for existing verification callers that still operate
+        on a financials ID.
+        """
         financials = self.session.scalar(
             select(BuyerFinancials)
-            .join(BuyerProfile, BuyerFinancials.buyer_id == BuyerProfile.id)
+            .join(
+                BuyerProfile,
+                BuyerFinancials.buyer_id
+                == BuyerProfile.id,
+            )
             .where(
                 BuyerFinancials.id == financials_id,
                 BuyerProfile.user_id == user_id,
             )
         )
+
         if financials is None:
-            raise ResourceNotFoundError("Buyer financials not found")
+            raise ResourceNotFoundError(
+                "Buyer financials not found"
+            )
+
         return financials
+
+    def get_buyer_financials_for_buyer(
+        self,
+        buyer_id: UUID,
+    ) -> BuyerFinancials | None:
+        """
+        Read-only lookup of the financial container belonging
+        to a BuyerProfile.
+        """
+        return self.session.scalar(
+            select(BuyerFinancials).where(
+                BuyerFinancials.buyer_id == buyer_id
+            )
+        )
+
+    def get_buyer_financials_for_user(
+        self,
+        user_id: UUID,
+    ) -> BuyerFinancials | None:
+        """
+        Read-only convenience lookup for existing callers.
+
+        New document flows should resolve BuyerProfile first and
+        then call get_buyer_financials_for_buyer().
+        """
+        return self.session.scalar(
+            select(BuyerFinancials)
+            .join(
+                BuyerProfile,
+                BuyerFinancials.buyer_id
+                == BuyerProfile.id,
+            )
+            .where(
+                BuyerProfile.user_id == user_id
+            )
+        )
+
+    def get_or_create_buyer_financials(
+        self,
+        buyer_id: UUID,
+    ) -> BuyerFinancials:
+        """
+        Return the financial container for a BuyerProfile,
+        creating it only when one does not already exist.
+
+        The database UNIQUE constraint on buyer_id is the final
+        concurrency guard.
+
+        A nested transaction creates a savepoint so that if two
+        requests race to create the same BuyerFinancials row, the
+        losing INSERT can be rolled back without invalidating the
+        caller's entire transaction.
+        """
+        existing = self.get_buyer_financials_for_buyer(
+            buyer_id
+        )
+
+        if existing is not None:
+            return existing
+
+        financials = BuyerFinancials(
+            buyer_id=buyer_id,
+        )
+
+        try:
+            with self.session.begin_nested():
+                self.session.add(
+                    financials
+                )
+                self.session.flush()
+
+            return financials
+
+        except IntegrityError:
+            # Another transaction may have created the financial
+            # container after our initial SELECT but before our INSERT.
+            #
+            # begin_nested() confines the failed INSERT to a savepoint,
+            # so the outer transaction/session remains usable.
+            existing = self.get_buyer_financials_for_buyer(
+                buyer_id
+            )
+
+            if existing is None:
+                # The IntegrityError was not the expected race on the
+                # UNIQUE buyer_id constraint. Do not hide the real error.
+                raise
+
+            return existing
+
+    # ============================================================
+    # BUSINESS
+    # ============================================================
 
     def require_owned_business_financials(
         self,
@@ -75,16 +227,121 @@ class VerificationRepository:
     ) -> BusinessFinancials:
         financials = self.session.scalar(
             select(BusinessFinancials)
-            .join(Business, BusinessFinancials.business_id == Business.id)
-            .join(SellerProfile, Business.seller_id == SellerProfile.id)
+            .join(
+                Business,
+                BusinessFinancials.business_id
+                == Business.id,
+            )
+            .join(
+                SellerProfile,
+                Business.seller_id
+                == SellerProfile.id,
+            )
             .where(
                 BusinessFinancials.id == financials_id,
                 SellerProfile.user_id == user_id,
             )
         )
+
         if financials is None:
-            raise ResourceNotFoundError("Business financials not found")
+            raise ResourceNotFoundError(
+                "Business financials not found"
+            )
+
         return financials
+
+    def require_owned_business(
+        self,
+        business_id: UUID,
+        user_id: UUID,
+    ) -> Business:
+        business = self.session.scalar(
+            select(Business)
+            .join(
+                SellerProfile,
+                Business.seller_id
+                == SellerProfile.id,
+            )
+            .where(
+                Business.id == business_id,
+                SellerProfile.user_id == user_id,
+            )
+        )
+
+        if business is None:
+            raise ResourceNotFoundError(
+                "Business not found"
+            )
+
+        return business
+
+    def get_business_financials_for_business(
+        self,
+        business_id: UUID,
+    ) -> BusinessFinancials | None:
+        """
+        Read-only lookup of the financial container belonging
+        to a Business.
+        """
+        return self.session.scalar(
+            select(BusinessFinancials).where(
+                BusinessFinancials.business_id
+                == business_id
+            )
+        )
+
+    def get_or_create_business_financials(
+        self,
+        business_id: UUID,
+    ) -> BusinessFinancials:
+        """
+        Return the financial container for a business, creating it only
+        when one does not already exist.
+
+        The database UNIQUE constraint on business_id is the final
+        concurrency guard. A savepoint prevents a concurrent insert
+        conflict from rolling back the caller's entire transaction.
+        """
+        existing = self.get_business_financials_for_business(
+            business_id
+        )
+
+        if existing is not None:
+            return existing
+
+        financials = BusinessFinancials(
+            business_id=business_id,
+        )
+
+        try:
+            with self.session.begin_nested():
+                self.session.add(
+                    financials
+                )
+                self.session.flush()
+
+            return financials
+
+        except IntegrityError:
+            # Another transaction may have created the financial
+            # container after our initial lookup but before our INSERT.
+            #
+            # begin_nested() limits the rollback to the savepoint,
+            # leaving the outer transaction/session usable.
+            existing = self.get_business_financials_for_business(
+                business_id
+            )
+
+            if existing is None:
+                # The IntegrityError was not the expected race on the
+                # unique business_id constraint, so do not hide it.
+                raise
+
+            return existing
+
+    # ============================================================
+    # DOCUMENTS
+    # ============================================================
 
     def list_documents_for_buyer_financials(
         self,
@@ -93,8 +350,14 @@ class VerificationRepository:
         return list(
             self.session.scalars(
                 select(Document)
-                .where(Document.buyer_financials_id == financials_id)
-                .order_by(Document.uploaded_at.desc(), Document.id.desc())
+                .where(
+                    Document.buyer_financials_id
+                    == financials_id
+                )
+                .order_by(
+                    Document.uploaded_at.desc(),
+                    Document.id.desc(),
+                )
             ).all()
         )
 
@@ -105,33 +368,16 @@ class VerificationRepository:
         return list(
             self.session.scalars(
                 select(Document)
-                .where(Document.business_financials_id == financials_id)
-                .order_by(Document.uploaded_at.desc(), Document.id.desc())
+                .where(
+                    Document.business_financials_id
+                    == financials_id
+                )
+                .order_by(
+                    Document.uploaded_at.desc(),
+                    Document.id.desc(),
+                )
             ).all()
         )
-
-    def require_owned_business(
-        self,
-        business_id: UUID,
-        user_id: UUID,
-    ) -> Business:
-        business = self.session.scalar(
-            select(Business)
-            .join(SellerProfile, Business.seller_id == SellerProfile.id)
-            .where(
-                Business.id == business_id,
-                SellerProfile.user_id == user_id,
-            )
-        )
-        if business is None:
-            raise ResourceNotFoundError("Business not found")
-        return business
-
-    def require_user(self, user_id: UUID) -> User:
-        user = self.session.scalar(select(User).where(User.id == user_id))
-        if user is None:
-            raise ResourceNotFoundError("User not found")
-        return user
 
     def require_owned_document(
         self,
@@ -142,23 +388,28 @@ class VerificationRepository:
             select(Document)
             .outerjoin(
                 BuyerFinancials,
-                Document.buyer_financials_id == BuyerFinancials.id,
+                Document.buyer_financials_id
+                == BuyerFinancials.id,
             )
             .outerjoin(
                 BuyerProfile,
-                BuyerFinancials.buyer_id == BuyerProfile.id,
+                BuyerFinancials.buyer_id
+                == BuyerProfile.id,
             )
             .outerjoin(
                 BusinessFinancials,
-                Document.business_financials_id == BusinessFinancials.id,
+                Document.business_financials_id
+                == BusinessFinancials.id,
             )
             .outerjoin(
                 Business,
-                BusinessFinancials.business_id == Business.id,
+                BusinessFinancials.business_id
+                == Business.id,
             )
             .outerjoin(
                 SellerProfile,
-                Business.seller_id == SellerProfile.id,
+                Business.seller_id
+                == SellerProfile.id,
             )
             .where(
                 Document.id == document_id,
@@ -168,40 +419,78 @@ class VerificationRepository:
                 ),
             )
         )
+
         if document is None:
-            raise ResourceNotFoundError("Document not found")
+            raise ResourceNotFoundError(
+                "Document not found"
+            )
+
         return document
 
-    def get_document(self, document_id: UUID) -> Document | None:
+    def get_document(
+        self,
+        document_id: UUID,
+    ) -> Document | None:
         return self.session.scalar(
-            select(Document).where(Document.id == document_id)
+            select(Document).where(
+                Document.id == document_id
+            )
         )
 
-    def get_expected_business_names(self, document: Document) -> list[str] | None:
+    def get_expected_business_names(
+        self,
+        document: Document,
+    ) -> list[str] | None:
         if document.business_financials_id is None:
             return None
+
         row = self.session.execute(
-            select(Business.legal_name, Business.dba)
+            select(
+                Business.legal_name,
+                Business.dba,
+            )
             .join(
                 BusinessFinancials,
-                BusinessFinancials.business_id == Business.id,
+                BusinessFinancials.business_id
+                == Business.id,
             )
             .where(
-                BusinessFinancials.id == document.business_financials_id
+                BusinessFinancials.id
+                == document.business_financials_id
             )
         ).one_or_none()
-        if row is None:
-            raise ResourceNotFoundError("Document business not found")
-        return [name for name in row if name]
 
-    def add_document(self, document: Document) -> Document:
-        self.session.add(document)
+        if row is None:
+            raise ResourceNotFoundError(
+                "Document business not found"
+            )
+
+        return [
+            name
+            for name in row
+            if name
+        ]
+
+    def add_document(
+        self,
+        document: Document,
+    ) -> Document:
+        self.session.add(
+            document
+        )
         self.session.flush()
+
         return document
 
-    def add_declaration(self, declaration: Declaration) -> Declaration:
-        self.session.add(declaration)
+    def add_declaration(
+        self,
+        declaration: Declaration,
+    ) -> Declaration:
+        self.session.add(
+            declaration
+        )
         self.session.flush()
+
         return declaration
 
     def update_document_status(
@@ -214,99 +503,189 @@ class VerificationRepository:
         verified_at: datetime | None = None,
     ) -> Document:
         document.verification_status = status
+
         if provider is not None:
             document.verification_provider = provider
+
         if metadata is not None:
             document.document_metadata = {
-                **(document.document_metadata or {}),
+                **(
+                    document.document_metadata
+                    or {}
+                ),
                 **metadata,
             }
+
         document.verified_at = verified_at
         self.session.flush()
+
         return document
+
+    # ============================================================
+    # USERS
+    # ============================================================
+
+    def require_user(
+        self,
+        user_id: UUID,
+    ) -> User:
+        user = self.session.scalar(
+            select(User).where(
+                User.id == user_id
+            )
+        )
+
+        if user is None:
+            raise ResourceNotFoundError(
+                "User not found"
+            )
+
+        return user
+
+    def get_user_by_provider_reference(
+        self,
+        reference: str,
+    ) -> User | None:
+        return self.session.scalar(
+            select(User).where(
+                User.provider_reference
+                == reference
+            )
+        )
+
+    # ============================================================
+    # EVENTS
+    # ============================================================
 
     def create_document_uploaded_event(
         self,
         document: Document,
         user_id: UUID,
     ) -> UUID:
-        event = OutboxRepository(self.session).create_event(
+        event = OutboxRepository(
+            self.session
+        ).create_event(
             OutboxEventCreate(
-                idempotency_key=f"document_uploaded:{document.id}",
+                idempotency_key=(
+                    f"document_uploaded:{document.id}"
+                ),
                 event_type=EventType.DOCUMENT_UPLOADED,
                 entity_type="document",
                 entity_id=document.id,
                 payload={
                     "user_id": str(user_id),
-                    "document_id": str(document.id),
+                    "document_id": str(
+                        document.id
+                    ),
                 },
             )
         )
+
         return event.id
 
-    def get_document_owner_user_id(self, document: Document) -> UUID:
+    def get_document_owner_user_id(
+        self,
+        document: Document,
+    ) -> UUID:
         if document.buyer_financials_id is not None:
             user_id = self.session.scalar(
-                select(BuyerProfile.user_id)
+                select(
+                    BuyerProfile.user_id
+                )
                 .join(
                     BuyerFinancials,
-                    BuyerFinancials.buyer_id == BuyerProfile.id,
-                )
-                .where(BuyerFinancials.id == document.buyer_financials_id)
-            )
-        else:
-            user_id = self.session.scalar(
-                select(SellerProfile.user_id)
-                .join(Business, Business.seller_id == SellerProfile.id)
-                .join(
-                    BusinessFinancials,
-                    BusinessFinancials.business_id == Business.id,
+                    BuyerFinancials.buyer_id
+                    == BuyerProfile.id,
                 )
                 .where(
-                    BusinessFinancials.id == document.business_financials_id
+                    BuyerFinancials.id
+                    == document.buyer_financials_id
                 )
             )
+
+        else:
+            user_id = self.session.scalar(
+                select(
+                    SellerProfile.user_id
+                )
+                .join(
+                    Business,
+                    Business.seller_id
+                    == SellerProfile.id,
+                )
+                .join(
+                    BusinessFinancials,
+                    BusinessFinancials.business_id
+                    == Business.id,
+                )
+                .where(
+                    BusinessFinancials.id
+                    == document.business_financials_id
+                )
+            )
+
         if user_id is None:
-            raise ResourceNotFoundError("Document owner not found")
+            raise ResourceNotFoundError(
+                "Document owner not found"
+            )
+
         return user_id
 
-    def create_verification_completed_event(self, document: Document) -> UUID:
-        user_id = self.get_document_owner_user_id(document)
-        event = OutboxRepository(self.session).create_event(
+    def create_verification_completed_event(
+        self,
+        document: Document,
+    ) -> UUID:
+        user_id = (
+            self.get_document_owner_user_id(
+                document
+            )
+        )
+
+        event = OutboxRepository(
+            self.session
+        ).create_event(
             OutboxEventCreate(
-                idempotency_key=f"verification_completed:document:{document.id}",
-                event_type=EventType.VERIFICATION_COMPLETED,
+                idempotency_key=(
+                    "verification_completed:"
+                    f"document:{document.id}"
+                ),
+                event_type=(
+                    EventType.VERIFICATION_COMPLETED
+                ),
                 entity_type="document",
                 entity_id=document.id,
                 payload={
-                    "user_id": str(user_id),
-                    "verification_id": str(document.id),
-                    "verification_domain": "document",
+                    "user_id": str(
+                        user_id
+                    ),
+                    "verification_id": str(
+                        document.id
+                    ),
+                    "verification_domain": (
+                        "document"
+                    ),
                 },
             )
         )
+
         return event.id
 
-    def get_user_by_provider_reference(self, reference: str) -> User | None:
-        return self.session.scalar(
-            select(User).where(User.provider_reference == reference)
-        )
+    # ============================================================
+    # GENERAL BUSINESS LOOKUPS
+    # ============================================================
 
-    def get_business(self, business_id: UUID) -> Business | None:
-        return self.session.scalar(
-            select(Business).where(Business.id == business_id)
-        )
-
-    def get_business_financials_for_business(
+    def get_business(
         self,
         business_id: UUID,
-    ) -> BusinessFinancials | None:
+    ) -> Business | None:
         return self.session.scalar(
-            select(BusinessFinancials).where(
-                BusinessFinancials.business_id == business_id
+            select(Business).where(
+                Business.id == business_id
             )
         )
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(
+        timezone.utc
+    )
