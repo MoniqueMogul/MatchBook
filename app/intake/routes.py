@@ -989,6 +989,68 @@ def update_business(
         business
     )
 
+@router.post(
+    "/sellers/businesses/{business_id}/list",
+    response_model=BusinessRead,
+    status_code=status.HTTP_200_OK,
+)
+def publish_business_listing(
+    business_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    service: IntakeService = Depends(
+        get_intake_service
+    ),
+) -> BusinessRead:
+
+    try:
+        business = service.list_business(
+            current_user_id,
+            business_id,
+        )
+
+    except IntakeRepositoryError as exc:
+        _raise_http_error(
+            exc
+        )
+
+    return BusinessRead.model_validate(
+        business
+    )
+
+
+@router.post(
+    "/sellers/businesses/{business_id}/unlist",
+    response_model=BusinessRead,
+    status_code=status.HTTP_200_OK,
+)
+def unpublish_business_listing(
+    business_id: UUID,
+    current_user_id: UUID = Depends(
+        get_current_user_id
+    ),
+    service: IntakeService = Depends(
+        get_intake_service
+    ),
+) -> BusinessRead:
+
+    try:
+        business = service.unlist_business(
+            current_user_id,
+            business_id,
+        )
+
+    except IntakeRepositoryError as exc:
+        _raise_http_error(
+            exc
+        )
+
+    return BusinessRead.model_validate(
+        business
+    )
+
+
 @router.get(
     "/sellers/businesses/{business_id}/readiness",
     response_model=ReadinessResponse,
