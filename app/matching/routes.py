@@ -12,7 +12,12 @@ from app.matching.api_schema import (
     MatchResponse, BusinessMatchSummary,
 )
 from app.matching.repository import MatchingRepository
+from app.matching.explanation import (MatchExplanationResponse, evidence_for, generate_for_buyer, ExplanationBusy)
 from app.verification.business_images import business_image_url
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -147,3 +152,89 @@ def get_match_detail(
         created_at=match.created_at,
         updated_at=match.updated_at,
     )
+
+
+
+@router.post(
+    "/{match_id}/ai-explanation",
+    response_model=MatchExplanationResponse,
+)
+def explain_match(
+    match_id: UUID,
+    user_id: UUID = Depends(get_current_user_id),
+    session: Session = Depends(get_db),
+) -> MatchExplanationResponse:
+    repository = MatchingRepository(session)
+
+    buyer = repository.get_buyer_profile_by_user_id(user_id)
+
+    match = (
+        repository.get_recommendation_for_buyer(
+            buyer_id=buyer.id,
+            match_id=match_id,
+        )
+        if buyer
+        else None
+    )
+
+    if match is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Match not found",
+        )
+
+    evidence = evidence_for(match)
+
+    if evidence is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This match does not have enough stored "
+                "evidence to explain."
+            ),
+        )
+
+    try:
+        explanation = generate_for_buyer(
+            evidence,
+            user_id=user_id,
+            match_id=match_id,
+        )
+
+        return MatchExplanationResponse(
+            match_id=match_id,
+            explanation=explanation,
+        )
+
+    except ExplanationBusy:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "AI generation is busy or your limit has been "
+                "reached. Please try again later."
+            ),
+        ) from None
+
+    except Exception as exc:
+        print(
+            "AI EXPLANATION ERROR:",
+            type(exc).__name__,
+            repr(exc),
+            flush=True,
+        )
+
+        logger.exception(
+            "AI match explanation failed",
+            extra={
+                "match_id": str(match_id),
+                "user_id": str(user_id),
+            },
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The AI explanation is temporarily unavailable. "
+                "Please try again."
+            ),
+        ) from None

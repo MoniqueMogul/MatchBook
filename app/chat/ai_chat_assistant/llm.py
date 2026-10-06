@@ -1,8 +1,8 @@
 import json
-import os
 import time
 
 from openai import OpenAI
+from app.core.ai import ai_client, ai_model
 
 from app.chat.ai_chat_assistant.config import (
     ACTIVE_INTRODUCTION_PROMPT,
@@ -49,12 +49,11 @@ class AIIntroductionLLM:
         model: str | None = None,
         prompt: PromptConfig = ACTIVE_INTRODUCTION_PROMPT,
     ) -> None:
-        self.client = client or OpenAI()
+        self.client = client or ai_client()
 
         self.model = (
             model
-            or os.getenv("MATCHBOOK_CHAT_AI_MODEL")
-            or "gpt-5.4-mini"
+            or ai_model()
         )
 
         self.prompt = prompt

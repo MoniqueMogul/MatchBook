@@ -16,6 +16,8 @@ if not MATCHBOOK_DATABASE_URL:
 
 engine = create_engine(
     MATCHBOOK_DATABASE_URL,
+    pool_size=1,
+    max_overflow=1,
     pool_pre_ping=True,
 )
 
